@@ -1,0 +1,44 @@
+[project]
+name = "e2-tts-pytorch"
+version = "0.0.1"
+description = "E2-TTS in Pytorch"
+authors = [
+    { name = "Phil Wang", email = "lucidrains@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+license = { file = "LICENSE" }
+keywords = [
+    'artificial intelligence',
+    'deep learning',
+    'transformers',
+    'attention mechanism',
+    'text to speech'
+  ]
+classifiers=[
+    'Development Status :: 4 - Beta',
+    'Intended Audience :: Developers',
+    'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    'License :: OSI Approved :: MIT License',
+    'Programming Language :: Python :: 3.8',
+  ]
+
+dependencies = [
+    'einops>=0.8.0',
+    'torch>=2.0',
+    'x-transformers'
+]
+
+[project.urls]
+Homepage = "https://pypi.org/project/e2-tts-pytorch/"
+Repository = "https://github.com/lucidrains/e2-tts-pytorch"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["e2_tts_pytorch"]
