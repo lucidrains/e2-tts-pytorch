@@ -5,10 +5,12 @@ import torch.nn.functional as F
 
 from einops import einsum, rearrange
 
+from x_transformers import Encoder
+
 # helpers
 
 def exists(v):
-    return is not None
+    return v is not None
 
 # main class
 
