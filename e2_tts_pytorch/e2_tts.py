@@ -46,7 +46,10 @@ class E2TTS(Module):
         self.layers = ModuleList([])
 
         for _ in range(depth):
+            attn_norm = RMSNorm(dim)
             attn = Attention(dim = dim, **attn_kwargs)
+
+            ff_norm = RMSNorm(dim)
             ff = FeedForward(dim = dim, **ff_kwargs)
 
             skip_proj = nn.Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
@@ -54,8 +57,12 @@ class E2TTS(Module):
             self.layers.append(ModuleList([
                 skip_proj,
                 attn,
-                ff
+                attn_norm,
+                ff,
+                ff_norm
             ]))
+
+        self.final_norm = RMSNorm(dim)
 
     def forward(
         self,
@@ -64,11 +71,10 @@ class E2TTS(Module):
 
         skips = []
 
-        for ind, (maybe_skip_proj, attn, ff) in enumerate(self.layers):
+        for ind, (maybe_skip_proj, attn_norm, attn, ff_norm, ff) in enumerate(self.layers):
             layer = ind + 1
 
             # skip connection logic
-            # first do additive
 
             is_first_half = layer <= (self.depth // 2)
             is_later_half = not is_first_half
@@ -80,16 +86,18 @@ class E2TTS(Module):
                 skip = skips.pop()
 
                 if exists(maybe_skip_proj):
+                    # concatenative
                     x = torch.cat((x, skip), dim = -1)
                     x = maybe_skip_proj(x)
                 else:
+                    # additive
                     x = x + skip
 
             # attention and feedforward blocks
 
-            x = attn(x) + x
-            x = ff(x) + x
+            x = attn(attn_norm(x)) + x
+            x = ff(ff_norm(x)) + x
 
         assert len(skips) == 0
 
-        return x
+        return self.final_norm(x)
