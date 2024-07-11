@@ -5,6 +5,8 @@
 
 Implementation of E2-TTS, <a href="https://arxiv.org/abs/2406.18009v1">Embarrassingly Easy Fully Non-Autoregressive Zero-Shot TTS</a>, in Pytorch
 
+You can chat with other researchers about this work <a href="https://discord.gg/XXHAarGSEH">here</a>
+
 ## Citations
 
 ```bibtex
