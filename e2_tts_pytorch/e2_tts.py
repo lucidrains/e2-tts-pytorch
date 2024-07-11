@@ -1,3 +1,5 @@
+from typing import Literal
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -31,11 +33,14 @@ class E2TTS(Module):
         *,
         dim,
         depth,
+        skip_connect_type: Literal['additive', 'concat'] = 'concat',
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
     ):
         super().__init__()
         assert divisible_by(depth, 2), 'depth needs to be even'
+
+        needs_skip_proj = skip_connect_type == 'concat'
 
         self.depth = depth
         self.layers = ModuleList([])
@@ -44,7 +49,10 @@ class E2TTS(Module):
             attn = Attention(dim = dim, **attn_kwargs)
             ff = FeedForward(dim = dim, **ff_kwargs)
 
+            skip_proj = nn.Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
+
             self.layers.append(ModuleList([
+                skip_proj,
                 attn,
                 ff
             ]))
@@ -56,7 +64,7 @@ class E2TTS(Module):
 
         skips = []
 
-        for ind, (attn, ff) in enumerate(self.layers):
+        for ind, (maybe_skip_proj, attn, ff) in enumerate(self.layers):
             layer = ind + 1
 
             # skip connection logic
@@ -69,7 +77,13 @@ class E2TTS(Module):
                 skips.append(x)
 
             if is_later_half:
-                x = x + skips.pop()
+                skip = skips.pop()
+
+                if exists(maybe_skip_proj):
+                    x = torch.cat((x, skip), dim = -1)
+                    x = maybe_skip_proj(x)
+                else:
+                    x = x + skip
 
             # attention and feedforward blocks
 
