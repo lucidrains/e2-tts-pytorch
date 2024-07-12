@@ -7,7 +7,7 @@ from e2_trainer import E2Trainer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-tokenizer_path = "/home/azureuser/xtts/assets/vocab.json"
+tokenizer_path = "vocab.json"
 
 train_dataset = E2EDataset("MushanW/GLOBE", tokenizer_path)
 
