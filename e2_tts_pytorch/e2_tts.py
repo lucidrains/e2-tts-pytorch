@@ -16,6 +16,7 @@ from x_transformers import (
     Attention,
     FeedForward,
     RMSNorm,
+    AdaptiveRMSNorm
 )
 
 # helpers
