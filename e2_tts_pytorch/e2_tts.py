@@ -214,14 +214,33 @@ class DurationPredictor(Module):
         *,
         lens: Int['b'] = None,
         mask: Bool['b n'] = None,
-        target_duration: Int['b'] = None
+        return_loss = True
     ):
-        seq_len = x.shape[1]
+        batch, seq_len, device = *x.shape[:2], x.device
 
         assert not (exists(lens) and exists(mask))
 
+        # handle lengths (duration)
+
         if exists(lens):
             mask = lens_to_mask(lens, length = seq_len)
+        elif exists(mask):
+            lens = mask.sum(dim = -1).long()
+        else:
+            full_len = torch.tensor(seq_len, device = device)
+            lens = repeat(full_len, ' -> b', b = batch)
+
+        # if returning a loss, mask out randomly from an index and have it predict the duration
+
+        if return_loss:
+
+            rand_frac_index = x.new_zeros(batch).uniform_(0, 1)
+            rand_index = (rand_frac_index * lens).long()
+
+            seq = torch.arange(seq_len, device = device)
+            mask &= einx.less('n, b -> b n', seq, rand_index)
+
+        # attending
 
         x = self.transformer(x, mask = mask)
 
@@ -229,10 +248,14 @@ class DurationPredictor(Module):
 
         pred = self.to_pred(x)
 
-        if not exists(target_duration):
+        # return the prediction if not returning loss
+
+        if not return_loss:
             return pred
 
-        return F.mse_loss(pred, target_duration.float())
+        # loss
+
+        return F.mse_loss(pred, lens.float())
 
 class E2TTS(Module):
     def __init__(
