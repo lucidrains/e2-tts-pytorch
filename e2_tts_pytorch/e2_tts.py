@@ -27,7 +27,7 @@ def divisible_by(num, den):
 
 # main class
 
-class E2TTS(Module):
+class Transformer(Module):
     def __init__(
         self,
         *,
@@ -57,17 +57,22 @@ class E2TTS(Module):
 
             self.layers.append(ModuleList([
                 skip_proj,
-                attn,
                 attn_norm,
+                attn,
+                ff_norm,
                 ff,
-                ff_norm
             ]))
 
-        self.final_norm = RMSNorm(dim)
+        self.to_pred = nn.Sequential(
+            RMSNorm(dim),
+            nn.Linear(dim, dim, bias = False)
+        )
 
     def forward(
         self,
-        x
+        x,
+        mask = None,
+        target = None
     ):
         skip_connect_type = self.skip_connect_type
 
@@ -102,4 +107,9 @@ class E2TTS(Module):
 
         assert len(skips) == 0
 
-        return self.final_norm(x)
+        pred = self.to_pred(x)
+
+        if not exists(target):
+            return pred
+
+        return F.mse_loss(pred, target)
