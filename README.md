@@ -40,6 +40,8 @@ e2tts = E2TTS(
 
 loss = e2tts(x)
 loss.backward()
+
+sampled = e2tts.sample(x)
 ```
 
 ## Citations

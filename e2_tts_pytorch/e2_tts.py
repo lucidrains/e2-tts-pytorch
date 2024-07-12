@@ -167,7 +167,12 @@ class E2TTS(Module):
         self,
         sigma = 0.,
         transformer: dict | Transformer = None,
-        duration_predictor: dict | DurationPredictor | None = None
+        duration_predictor: dict | DurationPredictor | None = None,
+        odeint_kwargs: dict = dict(
+            atol = 1e-5,
+            rtol = 1e-5,
+            method = 'midpoint'
+        )
     ):
         super().__init__()
 
@@ -187,9 +192,39 @@ class E2TTS(Module):
 
         self.sigma = sigma
 
+        # sampling
+
+        self.odeint_kwargs = odeint_kwargs
+
     @property
     def device(self):
         return next(self.parameters()).device
+
+    @torch.no_grad()
+    def sample(
+        self,
+        cond,
+        mask = None,
+        steps = 3
+    ):
+        self.eval()
+        batch = cond.shape[0]
+
+        # neural ode
+
+        def fn(t, x):
+            return self.transformer(
+                cond,
+                mask = mask
+            )
+
+        y0 = torch.randn_like(cond)
+        t = torch.linspace(0, 1, steps, device = self.device)
+
+        trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
+        sampled = trajectory[-1]
+
+        return sampled
 
     def forward(
         self,
@@ -197,6 +232,9 @@ class E2TTS(Module):
         mask = None,
         return_loss = True
     ):
+        if return_loss:
+            self.train()
+
         batch, dtype, σ = x.shape[0], x.dtype, self.sigma
 
         # transformer and prediction head
