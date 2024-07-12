@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 
 import torch
@@ -25,7 +27,8 @@ def default(v, d):
 def divisible_by(num, den):
     return (num % den) == 0
 
-# main class
+# attention and transformer backbone
+# for use in both e2tts as well as duration module
 
 class Transformer(Module):
     def __init__(
@@ -113,3 +116,46 @@ class Transformer(Module):
             return pred
 
         return F.mse_loss(pred, target)
+
+# main classes
+
+class DurationPredictor(Module):
+    def __init__(
+        self,
+        transformer: dict | Transformer
+    ):
+        super().__init__()
+
+        if isinstance(transformer, dict):
+            transformer = Transformer(**transformer)
+
+        self.transformer = transformer
+
+    def forward(
+        self,
+        x
+    ):
+        return x
+
+class E2TTS(Module):
+    def __init__(
+        self,
+        transformer: dict | Transformer = None,
+        duration_predictor: dict | DurationPredictor | None = None
+    ):
+        super().__init__()
+
+        if isinstance(transformer, dict):
+            transformer = Transformer(**transformer)
+
+        if isinstance(duration_predictor, dict):
+            duration_predictor = DurationPredictor(**duration_predictor)
+
+        self.transformer = transformer
+        self.duration_predictor = duration_predictor
+
+    def forward(
+        self,
+        x
+    ):
+        return x
