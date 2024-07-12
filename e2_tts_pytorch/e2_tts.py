@@ -33,13 +33,14 @@ class E2TTS(Module):
         *,
         dim,
         depth,
-        skip_connect_type: Literal['additive', 'concat'] = 'concat',
+        skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
     ):
         super().__init__()
         assert divisible_by(depth, 2), 'depth needs to be even'
 
+        self.skip_connect_type = skip_connect_type
         needs_skip_proj = skip_connect_type == 'concat'
 
         self.depth = depth
@@ -68,6 +69,7 @@ class E2TTS(Module):
         self,
         x
     ):
+        skip_connect_type = self.skip_connect_type
 
         skips = []
 
@@ -85,11 +87,11 @@ class E2TTS(Module):
             if is_later_half:
                 skip = skips.pop()
 
-                if exists(maybe_skip_proj):
+                if skip_connect_type == 'concat':
                     # concatenative
                     x = torch.cat((x, skip), dim = -1)
                     x = maybe_skip_proj(x)
-                else:
+                elif skip_connect_type == 'add':
                     # additive
                     x = x + skip
 
