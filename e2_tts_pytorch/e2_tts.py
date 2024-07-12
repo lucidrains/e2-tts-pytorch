@@ -204,6 +204,7 @@ class DurationPredictor(Module):
 
         self.to_pred = nn.Sequential(
             nn.Linear(dim, 1, bias = False),
+            nn.Softplus(),
             Rearrange('... 1 -> ...')
         )
 
