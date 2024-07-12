@@ -63,8 +63,6 @@ class E2Trainer:
                 text_lengths = batch['text_lengths']
                 mel_spec = rearrange(batch['mel'], 'b d n -> b n d')
                 mel_lengths = batch["mel_lengths"]
-                print(mel_spec.shape)
-                print(text_inputs.shape)
                 # duration = batch['durations']
                 if self.duration_predictor is not None:
                     dur_loss = self.duration_predictor(mel_spec, target_duration = duration)
