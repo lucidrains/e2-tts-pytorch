@@ -9,7 +9,7 @@ from torch.nn import Module, ModuleList
 from torchdiffeq import odeint
 
 import einx
-from einops import einsum, rearrange, reduce
+from einops import einsum, rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
 
 from x_transformers import (
@@ -51,6 +51,7 @@ class Transformer(Module):
         *,
         dim,
         depth,
+        cond_on_time = False,
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
@@ -65,11 +66,26 @@ class Transformer(Module):
         self.depth = depth
         self.layers = ModuleList([])
 
+        # time conditioning
+        # will use adaptive rmsnorm
+
+        self.cond_on_time = cond_on_time
+        rmsnorm_klass = RMSNorm if not cond_on_time else AdaptiveRMSNorm
+
+        self.time_cond_mlp = nn.Identity()
+
+        if cond_on_time:
+            self.time_cond_mlp = nn.Sequential(
+                Rearrange('... -> ... 1'),
+                nn.Linear(1, dim),
+                nn.SiLU()
+            )
+
         for _ in range(depth):
-            attn_norm = RMSNorm(dim)
+            attn_norm = rmsnorm_klass(dim)
             attn = Attention(dim = dim, **attn_kwargs)
 
-            ff_norm = RMSNorm(dim)
+            ff_norm = rmsnorm_klass(dim)
             ff = FeedForward(dim = dim, **ff_kwargs)
 
             skip_proj = nn.Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
@@ -82,16 +98,31 @@ class Transformer(Module):
                 ff,
             ]))
 
-        self.final_norm = RMSNorm(dim)
+        self.final_norm = rmsnorm_klass(dim)
 
     def forward(
         self,
         x,
+        times = None,
         mask = None
     ):
+        assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
+
+        # handle adaptive rmsnorm kwargs
+
+        norm_kwargs = dict()
+
+        if exists(times):
+            times = self.time_cond_mlp(times)
+            norm_kwargs.update(condition = times)
+
+        # skip connection related stuff
+
         skip_connect_type = self.skip_connect_type
 
         skips = []
+
+        # go through the layers
 
         for ind, (maybe_skip_proj, attn_norm, attn, ff_norm, ff) in enumerate(self.layers):
             layer = ind + 1
@@ -117,12 +148,12 @@ class Transformer(Module):
 
             # attention and feedforward blocks
 
-            x = attn(attn_norm(x)) + x
-            x = ff(ff_norm(x)) + x
+            x = attn(attn_norm(x, **norm_kwargs)) + x
+            x = ff(ff_norm(x, **norm_kwargs)) + x
 
         assert len(skips) == 0
 
-        return self.final_norm(x)
+        return self.final_norm(x, **norm_kwargs)
 
 # main classes
 
@@ -134,7 +165,10 @@ class DurationPredictor(Module):
         super().__init__()
 
         if isinstance(transformer, dict):
-            transformer = Transformer(**transformer)
+            transformer = Transformer(
+                **transformer,
+                cond_on_time = False
+            )
 
         self.transformer = transformer
 
@@ -178,7 +212,10 @@ class E2TTS(Module):
         super().__init__()
 
         if isinstance(transformer, dict):
-            transformer = Transformer(**transformer)
+            transformer = Transformer(
+                **transformer,
+                cond_on_time = True
+            )
 
         if isinstance(duration_predictor, dict):
             duration_predictor = DurationPredictor(**duration_predictor)
@@ -214,8 +251,11 @@ class E2TTS(Module):
         # neural ode
 
         def fn(t, x):
+            t = repeat(t, '-> b', b = batch)
+
             return self.transformer(
                 cond,
+                times = t,
                 mask = mask
             )
 
@@ -230,6 +270,7 @@ class E2TTS(Module):
     def forward(
         self,
         x,
+        times = None,
         mask = None,
         return_loss = True
     ):
@@ -238,9 +279,19 @@ class E2TTS(Module):
 
         batch, dtype, σ = x.shape[0], x.dtype, self.sigma
 
+        # if times were not passed in, instantiate random times for training
+
+        if not exists(times):
+            assert return_loss, 'you must be training if `times` is not passed in'
+            times = torch.rand((batch,), dtype = dtype, device = self.device)
+
         # transformer and prediction head
 
-        x = self.transformer(x, mask = mask)
+        x = self.transformer(
+            x,
+            times = times,
+            mask = mask
+        )
 
         pred = self.to_pred(x)
 
@@ -256,9 +307,9 @@ class E2TTS(Module):
 
         x0 = torch.randn_like(x1)
 
-        # random times
+        # t is random times from above
 
-        t = torch.rand((batch, 1, 1), dtype = dtype, device = self.device)
+        t = rearrange(times, 'b -> b 1 1')
 
         # sample xt (w in the paper)
 
