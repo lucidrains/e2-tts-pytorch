@@ -8,6 +8,7 @@ from e2_collate import collate_fn
 import os
 import logging
 from utils.compute_mel import TorchMelSpectrogram
+from einops import rearrange
 
 class E2Trainer:
     def __init__(self, model, optimizer, duration_predictor=None,
@@ -61,14 +62,16 @@ class E2Trainer:
             for batch in progress_bar:
                 text_inputs = batch['text']
                 text_lengths = batch['text_lengths']
-                mel = batch['mel']
+                mel_spec = rearrange(batch['mel'], 'b d n -> b n d')
                 mel_lengths = batch["mel_lengths"]
+                print(mel_spec.shape)
+                print(text_inputs.shape)
                 # duration = batch['durations']
                 if self.duration_predictor is not None:
-                    dur_loss = self.duration_predictor(mel, target_duration = duration)
-                masked_mel, masked_mel_hat = self.model(mel, mel_lengths, text_inputs, text_lengths)
-                mel_loss = torch.nn.functional.mse_loss(masked_mel, masked_mel_hat)
-                self.accelerator.backward(mel_loss)
+                    dur_loss = self.duration_predictor(mel_spec, target_duration = duration)
+                loss = self.model(mel_spec, text_inputs, lens=mel_lengths)
+                # mel_loss = torch.nn.functional.mse_loss(masked_mel, masked_mel_hat)
+                self.accelerator.backward(loss)
                 
                 if self.max_grad_norm > 0:
                     self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
@@ -76,11 +79,11 @@ class E2Trainer:
                 self.optimizer.step()
                 self.optimizer.zero_grad()
                 if self.accelerator.is_local_main_process:
-                    self.logger.info(f"Step {global_step+1}: E2E Mel Loss = {mel_loss.item():.4f}")
+                    self.logger.info(f"Step {global_step+1}: E2E Loss = {loss.item():.4f}")
                 global_step += 1
-                progress_bar.set_postfix(mel_loss=mel_loss.item())
+                progress_bar.set_postfix(loss=loss.item())
                 if global_step % save_step == 0:
                     self.save_checkpoint(global_step)
-            mel_loss /= len(train_dataloader)
+            loss /= len(train_dataloader)
             if self.accelerator.is_local_main_process:
-                    self.logger.info(f"Epoch {epoch+1}/{epochs} - E2E Mel Loss = {mel_loss.item():.4f}")
+                    self.logger.info(f"Epoch {epoch+1}/{epochs} - E2E Loss = {loss.item():.4f}")

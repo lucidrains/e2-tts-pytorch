@@ -7,7 +7,7 @@ from e2_trainer import E2Trainer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-tokenizer_path = "vocab.json"
+tokenizer_path = "/home/azureuser/xtts/assets/vocab.json"
 
 train_dataset = E2EDataset("MushanW/GLOBE", tokenizer_path)
 
@@ -21,7 +21,7 @@ duration_predictor = DurationPredictor(
 e2tts = E2TTS(
     duration_predictor = duration_predictor,
     transformer = dict(
-        dim = 512,
+        dim = 80,
         depth = 4,
         skip_connect_type = 'concat'
     ),

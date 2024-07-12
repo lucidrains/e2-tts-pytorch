@@ -307,6 +307,7 @@ class E2TTS(Module):
     def forward(
         self,
         x: Float['b n d'],
+        text: Int['b n'],
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
         mask: Bool['b n'] | None = None,
@@ -329,7 +330,6 @@ class E2TTS(Module):
             times = torch.rand((batch,), dtype = dtype, device = self.device)
 
         # transformer and prediction head
-
         x = self.transformer(
             x,
             times = times,

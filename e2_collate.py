@@ -2,21 +2,24 @@ import torch
 from torch.nn.utils.rnn import pad_sequence
 
 def collate_fn(batch):
-    mel_spec = [item['mel_spec'].squeeze(0) for item in batch]
-    mel_lengths = [item['mel_spec'].shape[-1] for item in batch]
-    text = [item['text'] for item in batch]
-    max_mel_length = max(mel_lengths)
-    padded_audio = []
-    for item in mel_spec:
-        padding = (0, max_mel_length - item.size(-1))
-        padded_item = torch.nn.functional.pad(item, padding, mode='constant', value=0)
-        padded_audio.append(padded_item)
-    audio = torch.stack(padded_audio)
+    mel_specs = [item['mel_spec'].squeeze(0) for item in batch]
+    mel_lengths = torch.LongTensor([spec.shape[-1] for spec in mel_specs])
+    
+    max_mel_length = mel_lengths.max().item()
+    padded_mel_specs = []
+    for spec in mel_specs:
+        padding = (0, max_mel_length - spec.size(-1))
+        padded_spec = torch.nn.functional.pad(spec, padding, mode='constant', value=0)
+        padded_mel_specs.append(padded_spec)
+    
+    mel_specs = torch.stack(padded_mel_specs)
 
+    text = [item['text'] for item in batch]
     text_lengths = torch.LongTensor([len(item) for item in text])
     text = pad_sequence([torch.LongTensor(item) for item in text], batch_first=True)
+
     batch_dict = {
-        'mel': mel_spec,
+        'mel': mel_specs,
         'mel_lengths': mel_lengths,
         'text': text,
         'text_lengths': text_lengths,
