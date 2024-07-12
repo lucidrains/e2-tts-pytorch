@@ -32,12 +32,19 @@ def divisible_by(num, den):
 
 # tensor helpers
 
+def lens_to_mask(t, length = None):
+    if not exists(length):
+        length = t.amax()
+
+    seq = torch.arange(length, device = t.device)
+    return einx.less('n, b -> b n', seq, t)
+
 def maybe_masked_mean(t, mask = None):
     if not exists(mask):
         return t.mean(dim = 1)
 
     t = einx.where('b n, b n d, -> b n d', mask, t, 0.)
-    num = reduce(t, 'b n d -> b d', t, 'sum')
+    num = reduce(t, 'b n d -> b d', 'sum')
     den = reduce(mask.float(), 'b n -> b', 'sum')
 
     return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
@@ -182,9 +189,16 @@ class DurationPredictor(Module):
     def forward(
         self,
         x,
+        lens = None,
         mask = None,
         target_duration = None
     ):
+        seq_len = x.shape[1]
+
+        assert not (exists(lens) and exists(mask))
+
+        if exists(lens):
+            mask = lens_to_mask(lens, length = seq_len)
 
         x = self.transformer(x, mask = mask)
 
@@ -271,13 +285,19 @@ class E2TTS(Module):
         self,
         x,
         times = None,
+        lens = None,
         mask = None,
         return_loss = True
     ):
+        batch, seq_len, dtype, σ = *x.shape[:2], x.dtype, self.sigma
+
+        assert not (exists(lens) and exists(mask))
+
+        if exists(lens):
+            mask = lens_to_mask(lens, length = seq_len)
+
         if return_loss:
             self.train()
-
-        batch, dtype, σ = x.shape[0], x.dtype, self.sigma
 
         # if times were not passed in, instantiate random times for training
 
