@@ -7,6 +7,41 @@ Implementation of E2-TTS, <a href="https://arxiv.org/abs/2406.18009v1">Embarrass
 
 You can chat with other researchers about this work <a href="https://discord.gg/XXHAarGSEH">here</a>
 
+## Usage
+
+```python
+import torch
+from e2_tts_pytorch import (
+    E2TTS,
+    DurationPredictor
+)
+
+duration_predictor = DurationPredictor(
+    transformer = dict(
+        dim = 512,
+        depth = 2,
+    )
+)
+
+x = torch.randn(1, 1024, 512)
+duration = torch.randn(1,)
+
+loss = duration_predictor(x, target_duration = duration)
+loss.backward()
+
+e2tts = E2TTS(
+    duration_predictor = duration_predictor,
+    transformer = dict(
+        dim = 512,
+        depth = 4,
+        skip_connect_type = 'concat'
+    ),
+)
+
+loss = e2tts(x)
+loss.backward()
+```
+
 ## Citations
 
 ```bibtex

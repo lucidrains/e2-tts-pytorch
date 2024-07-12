@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from typing import Literal
 
 import torch
@@ -7,8 +6,11 @@ from torch import nn
 import torch.nn.functional as F
 from torch.nn import Module, ModuleList
 
+from torchdiffeq import odeint
+
 import einx
-from einops import einsum, rearrange
+from einops import einsum, rearrange, reduce
+from einops.layers.torch import Rearrange
 
 from x_transformers import (
     Attention,
@@ -27,6 +29,18 @@ def default(v, d):
 def divisible_by(num, den):
     return (num % den) == 0
 
+# tensor helpers
+
+def maybe_masked_mean(t, mask = None):
+    if not exists(mask):
+        return t.mean(dim = 1)
+
+    t = einx.where('b n, b n d, -> b n d', mask, t, 0.)
+    num = reduce(t, 'b n d -> b d', t, 'sum')
+    den = reduce(mask.float(), 'b n -> b', 'sum')
+
+    return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
+
 # attention and transformer backbone
 # for use in both e2tts as well as duration module
 
@@ -43,6 +57,7 @@ class Transformer(Module):
         super().__init__()
         assert divisible_by(depth, 2), 'depth needs to be even'
 
+        self.dim = dim
         self.skip_connect_type = skip_connect_type
         needs_skip_proj = skip_connect_type == 'concat'
 
@@ -66,16 +81,12 @@ class Transformer(Module):
                 ff,
             ]))
 
-        self.to_pred = nn.Sequential(
-            RMSNorm(dim),
-            nn.Linear(dim, dim, bias = False)
-        )
+        self.final_norm = RMSNorm(dim)
 
     def forward(
         self,
         x,
-        mask = None,
-        target = None
+        mask = None
     ):
         skip_connect_type = self.skip_connect_type
 
@@ -110,12 +121,7 @@ class Transformer(Module):
 
         assert len(skips) == 0
 
-        pred = self.to_pred(x)
-
-        if not exists(target):
-            return pred
-
-        return F.mse_loss(pred, target)
+        return self.final_norm(x)
 
 # main classes
 
@@ -131,15 +137,35 @@ class DurationPredictor(Module):
 
         self.transformer = transformer
 
+        dim = transformer.dim
+
+        self.to_pred = nn.Sequential(
+            nn.Linear(dim, 1, bias = False),
+            Rearrange('... 1 -> ...')
+        )
+
     def forward(
         self,
-        x
+        x,
+        mask = None,
+        target_duration = None
     ):
-        return x
+
+        x = self.transformer(x, mask = mask)
+
+        x = maybe_masked_mean(x, mask)
+
+        pred = self.to_pred(x)
+
+        if not exists(target_duration):
+            return pred
+
+        return F.mse_loss(pred, target_duration)
 
 class E2TTS(Module):
     def __init__(
         self,
+        sigma = 0.,
         transformer: dict | Transformer = None,
         duration_predictor: dict | DurationPredictor | None = None
     ):
@@ -154,8 +180,59 @@ class E2TTS(Module):
         self.transformer = transformer
         self.duration_predictor = duration_predictor
 
+        dim = transformer.dim
+        self.to_pred = nn.Linear(dim, dim)
+
+        # conditional flow related
+
+        self.sigma = sigma
+
+    @property
+    def device(self):
+        return next(self.parameters()).device
+
     def forward(
         self,
-        x
+        x,
+        mask = None,
+        return_loss = True
     ):
-        return x
+        batch, dtype, σ = x.shape[0], x.dtype, self.sigma
+
+        # transformer and prediction head
+
+        x = self.transformer(x, mask = mask)
+
+        pred = self.to_pred(x)
+
+        if not return_loss:
+            return pred
+
+        x1 = pred
+
+        # main conditional flow training logic
+        # just 5 loc
+
+        # x0 is gaussian noise
+
+        x0 = torch.randn_like(x1)
+
+        # random times
+
+        times = torch.rand((batch,), dtype = dtype, device = self.device)
+        t = rearrange(times, 'b -> b 1 1')
+
+        # sample xt (w in the paper)
+
+        w = (1 - (1 - σ) * t) * x0 + t * x1
+
+        flow = x1 - (1 - σ) * x0
+
+        # flow matching loss
+
+        loss = F.mse_loss(pred, flow, reduction = 'none')
+
+        if exists(mask):
+            loss = loss[mask]
+
+        return loss.mean()
