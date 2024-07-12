@@ -307,42 +307,36 @@ class E2TTS(Module):
 
     def forward(
         self,
-        x: Float['b n d'],
+        inp: Float['b n d'], # is mel in paper
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
-        mask: Bool['b n'] | None = None,
-        return_loss = True
+        mask: Bool['b n'] | None = None
     ):
-        batch, seq_len, dtype, σ = *x.shape[:2], x.dtype, self.sigma
+        batch, seq_len, dtype, σ = *inp.shape[:2], inp.dtype, self.sigma
 
         assert not (exists(lens) and exists(mask))
 
         if exists(lens):
             mask = lens_to_mask(lens, length = seq_len)
+        elif exists(mask):
+            lens = mask.sum(dim = -1).long()
 
-        if return_loss:
-            self.train()
+        # get a random span to mask out for training conditionally
 
-        # if times were not passed in, instantiate random times for training
+        random_span_frac_indices = inp.new_zeros(2, batch).uniform_(0, 1)
+        rand_span_indices = (random_span_frac_indices * default(lens, seq_len)).long()
+        rand_span_indices = rand_span_indices.sort(dim = 0).values
 
-        if not exists(times):
-            assert return_loss, 'you must be training if `times` is not passed in'
-            times = torch.rand((batch,), dtype = dtype, device = self.device)
+        seq = torch.arange(seq_len, device = self.device)
+        start, end = rand_span_indices[..., None]
+        rand_span_mask = (seq >= start) & (seq <= end)
 
-        # transformer and prediction head
+        if exists(mask):
+            rand_span_mask &= mask
 
-        x = self.transformer(
-            x,
-            times = times,
-            mask = mask
-        )
+        # mel is x1
 
-        pred = self.to_pred(x)
-
-        if not return_loss:
-            return pred
-
-        x1 = pred
+        x1 = inp
 
         # main conditional flow training logic
         # just 4 loc
@@ -353,6 +347,7 @@ class E2TTS(Module):
 
         # t is random times from above
 
+        times = torch.rand((batch,), dtype = dtype, device = self.device)
         t = rearrange(times, 'b -> b 1 1')
 
         # sample xt (w in the paper)
@@ -361,11 +356,27 @@ class E2TTS(Module):
 
         flow = x1 - (1 - σ) * x0
 
+        # only predict what is within the random mask span for infilling
+
+        w = torch.where(
+            rand_span_mask[..., None],
+            w, x1
+        )
+
+        # transformer and prediction head
+
+        attended = self.transformer(
+            w,
+            times = times,
+            mask = mask
+        )
+
+        pred = self.to_pred(attended)
+
         # flow matching loss
 
         loss = F.mse_loss(pred, flow, reduction = 'none')
 
-        if exists(mask):
-            loss = loss[mask]
+        loss = loss[rand_span_mask]
 
         return loss.mean()
