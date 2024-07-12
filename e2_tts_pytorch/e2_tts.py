@@ -211,7 +211,7 @@ class E2TTS(Module):
         x1 = pred
 
         # main conditional flow training logic
-        # just 5 loc
+        # just 4 loc
 
         # x0 is gaussian noise
 
@@ -219,8 +219,7 @@ class E2TTS(Module):
 
         # random times
 
-        times = torch.rand((batch,), dtype = dtype, device = self.device)
-        t = rearrange(times, 'b -> b 1 1')
+        t = torch.rand((batch, 1, 1), dtype = dtype, device = self.device)
 
         # sample xt (w in the paper)
 
