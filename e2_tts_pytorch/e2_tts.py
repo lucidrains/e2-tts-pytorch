@@ -1,3 +1,10 @@
+"""
+ein notation:
+b - batch
+n - sequence
+d - dimension
+"""
+
 from __future__ import annotations
 from typing import Literal
 
@@ -19,6 +26,12 @@ from x_transformers import (
     AdaptiveRMSNorm
 )
 
+from e2_tts_pytorch.tensor_typing import (
+    Float,
+    Int,
+    Bool
+)
+
 # helpers
 
 def exists(v):
@@ -32,14 +45,22 @@ def divisible_by(num, den):
 
 # tensor helpers
 
-def lens_to_mask(t, length = None):
+def lens_to_mask(
+    t: Int['b'],
+    length: int | None = None
+) -> Bool['b n']:
+
     if not exists(length):
         length = t.amax()
 
     seq = torch.arange(length, device = t.device)
     return einx.less('n, b -> b n', seq, t)
 
-def maybe_masked_mean(t, mask = None):
+def maybe_masked_mean(
+    t: Float['b n d'],
+    mask: Bool['b n'] = None
+) -> Float['b d']:
+
     if not exists(mask):
         return t.mean(dim = 1)
 
@@ -109,9 +130,9 @@ class Transformer(Module):
 
     def forward(
         self,
-        x,
-        times = None,
-        mask = None
+        x: Float['b n d'],
+        times: Int['b'] | None = None,
+        mask: Bool['b n'] | None = None
     ):
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
 
@@ -188,10 +209,11 @@ class DurationPredictor(Module):
 
     def forward(
         self,
-        x,
-        lens = None,
-        mask = None,
-        target_duration = None
+        x: Float['b n d'],
+        *,
+        lens: Int['b'] = None,
+        mask: Bool['b n'] = None,
+        target_duration: Int['b'] = None
     ):
         seq_len = x.shape[1]
 
@@ -209,7 +231,7 @@ class DurationPredictor(Module):
         if not exists(target_duration):
             return pred
 
-        return F.mse_loss(pred, target_duration)
+        return F.mse_loss(pred, target_duration.float())
 
 class E2TTS(Module):
     def __init__(
@@ -256,7 +278,8 @@ class E2TTS(Module):
     def sample(
         self,
         cond,
-        mask = None,
+        *,
+        mask: Bool['b n'] | None = None,
         steps = 3
     ):
         self.eval()
@@ -283,10 +306,10 @@ class E2TTS(Module):
 
     def forward(
         self,
-        x,
-        times = None,
-        lens = None,
-        mask = None,
+        x: Float['b n d'],
+        times: Int['b'] | None = None,
+        lens: Int['b'] | None = None,
+        mask: Bool['b n'] | None = None,
         return_loss = True
     ):
         batch, seq_len, dtype, σ = *x.shape[:2], x.dtype, self.sigma

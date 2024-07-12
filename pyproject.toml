@@ -26,6 +26,7 @@ classifiers=[
 dependencies = [
     'einops>=0.8.0',
     'einx>=0.3.0',
+    'jaxtyping',
     'torch>=2.0',
     'torchdiffeq',
     'x-transformers>=1.31.12'
