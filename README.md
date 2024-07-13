@@ -48,7 +48,7 @@ e2tts = E2TTS(
 loss = e2tts(mel, text = text)
 loss.backward()
 
-sampled = e2tts.sample(mel[:, :5])
+sampled = e2tts.sample(mel[:, :5], text = text)
 
 ```
 
