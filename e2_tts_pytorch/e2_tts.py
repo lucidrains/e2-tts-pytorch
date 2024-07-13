@@ -80,6 +80,7 @@ class CharacterEmbed(Module):
     ):
         super().__init__()
         self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
+        self.combine = nn.Linear(dim * 2, dim)
 
     def forward(
         self,
@@ -94,7 +95,10 @@ class CharacterEmbed(Module):
 
         text = text[:, :max_seq_len] # just curtail if character tokens are more than the mel spec tokens, one of the edge cases the paper did not address
         text = F.pad(text, (0, max_seq_len - text.shape[1]), value = 0)
-        return x + self.embed(text)
+        text_embed = self.embed(text)
+
+        concatted = torch.cat((x, text_embed), dim = -1)
+        return self.combine(concatted)
 
 # attention and transformer backbone
 # for use in both e2tts as well as duration module
