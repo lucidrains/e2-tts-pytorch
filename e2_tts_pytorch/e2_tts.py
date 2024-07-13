@@ -70,6 +70,32 @@ def maybe_masked_mean(
 
     return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
 
+# character embedding
+
+class CharacterEmbed(Module):
+    def __init__(
+        self,
+        dim,
+        num_embeds = 256
+    ):
+        super().__init__()
+        self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
+
+    def forward(
+        self,
+        x: Float['b n d'],
+        text: Int['b n'],
+    ):
+        max_seq_len = x.shape[1]
+        text_mask = text == -1
+
+        text = text + 1 # use 0 as filler token
+        text = text.masked_fill(text_mask, 0)
+
+        text = text[:, :max_seq_len] # just curtail if character tokens are more than the mel spec tokens, one of the edge cases the paper did not address
+        text = F.pad(text, (0, max_seq_len - text.shape[1]), value = 0)
+        return x + self.embed(text)
+
 # attention and transformer backbone
 # for use in both e2tts as well as duration module
 
@@ -218,8 +244,9 @@ class DurationPredictor(Module):
             )
 
         self.transformer = transformer
-
         dim = transformer.dim
+
+        self.embed_text = CharacterEmbed(dim)
 
         self.to_pred = nn.Sequential(
             nn.Linear(dim, 1, bias = False),
@@ -231,13 +258,19 @@ class DurationPredictor(Module):
         self,
         x: Float['b n d'],
         *,
-        lens: Int['b'] = None,
-        mask: Bool['b n'] = None,
+        text: Int['b n'] | None = None,
+        lens: Int['b'] | None = None,
+        mask: Bool['b n'] | None = None,
         return_loss = True
     ):
         batch, seq_len, device = *x.shape[:2], x.device
 
         assert not (exists(lens) and exists(mask))
+
+        # text
+
+        if exists(text):
+            x = self.embed_text(x, text)
 
         # handle lengths (duration)
 
@@ -300,10 +333,12 @@ class E2TTS(Module):
             duration_predictor = DurationPredictor(**duration_predictor)
 
         self.transformer = transformer
-        self.duration_predictor = duration_predictor
-
         dim = transformer.dim
         self.to_pred = nn.Linear(dim, dim)
+
+        self.embed_text = CharacterEmbed(dim)
+
+        self.duration_predictor = duration_predictor
 
         # conditional flow related
 
@@ -322,6 +357,7 @@ class E2TTS(Module):
         self,
         cond: Float['b n d'],
         *,
+        text: Int['b n'] | None = None,
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
         steps = 3,
@@ -356,6 +392,11 @@ class E2TTS(Module):
 
         mask = lens_to_mask(duration)
 
+        # text
+
+        if exists(text):
+            cond = self.embed_text(cond, text)
+
         # neural ode
 
         def fn(t, x):
@@ -382,6 +423,8 @@ class E2TTS(Module):
     def forward(
         self,
         inp: Float['b n d'], # is mel in paper
+        *,
+        text: Int['b n'] | None = None,
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
         mask: Bool['b n'] | None = None
@@ -394,6 +437,11 @@ class E2TTS(Module):
             mask = lens_to_mask(lens, length = seq_len)
         elif exists(mask):
             lens = mask.sum(dim = -1).long()
+
+        # text
+
+        if exists(text):
+            inp = self.embed_text(inp, text)
 
         # get a random span to mask out for training conditionally
 
