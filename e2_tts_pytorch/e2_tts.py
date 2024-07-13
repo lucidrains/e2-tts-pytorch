@@ -364,10 +364,12 @@ class E2TTS(Module):
         x: Float['b n d'],
         times: Float['b'],
         mask: Bool['b n'] | None = None,
-        text: Int['b nt'] | None = None
+        text: Int['b nt'] | None = None,
+        drop_text_cond: bool | None = None
     ):
+
         if exists(text):
-            x = self.embed_text(x, text)
+            x = self.embed_text(x, text, drop_text_cond = drop_text_cond)
 
         attended = self.transformer(
             x,
@@ -375,8 +377,18 @@ class E2TTS(Module):
             mask = mask
         )
 
-        pred = self.to_pred(attended)
-        return pred
+        return self.to_pred(attended)
+
+    def cfg_transformer_with_pred_head(
+        self,
+        *args,
+        cfg_strength: float = 1.,
+        **kwargs,
+    ):
+        pred = self.transformer_with_pred_head(*args, drop_text_cond = False, **kwargs)
+        null_pred = self.transformer_with_pred_head(*args, drop_text_cond = True, **kwargs)
+
+        return pred + (pred - null_pred) * cfg_strength
 
     @torch.no_grad()
     def sample(
@@ -387,6 +399,7 @@ class E2TTS(Module):
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
         steps = 3,
+        cfg_strength = 1.,  # they used a classifier free guidance strenght of 1.
         max_duration = 4096 # in case the duration predictor goes haywire
     ):
         self.eval()
@@ -415,11 +428,6 @@ class E2TTS(Module):
 
         mask = lens_to_mask(duration)
 
-        # text
-
-        if exists(text):
-            cond = self.embed_text(cond, text)
-
         # neural ode
 
         def fn(t, x):
@@ -429,10 +437,12 @@ class E2TTS(Module):
 
             # predict flow
 
-            return self.transformer_with_pred_head(
+            return self.cfg_transformer_with_pred_head(
                 x,
                 times = t,
-                mask = mask
+                text = text,
+                mask = mask,
+                cfg_strength = cfg_strength
             )
 
         y0 = torch.randn_like(cond)
