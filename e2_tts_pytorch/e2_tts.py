@@ -229,6 +229,7 @@ class DurationPredictor(Module):
         else:
             full_len = torch.tensor(seq_len, device = device)
             lens = repeat(full_len, ' -> b', b = batch)
+            mask = lens_to_mask(lens, length = seq_len)
 
         # if returning a loss, mask out randomly from an index and have it predict the duration
 
