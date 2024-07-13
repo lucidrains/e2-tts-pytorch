@@ -7,6 +7,7 @@ d - dimension
 
 from __future__ import annotations
 from typing import Literal
+from random import random
 
 import torch
 from torch import nn
@@ -76,17 +77,22 @@ class CharacterEmbed(Module):
     def __init__(
         self,
         dim,
-        num_embeds = 256
+        num_embeds = 256,
+        cond_drop_prob = 0.
     ):
         super().__init__()
         self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
         self.combine = nn.Linear(dim * 2, dim)
+        self.cond_drop_prob
 
     def forward(
         self,
         x: Float['b n d'],
         text: Int['b n'],
     ):
+        if self.training and random() < self.cond_drop_prob:
+            return x
+
         max_seq_len = x.shape[1]
         text_mask = text == -1
 
@@ -283,7 +289,6 @@ class DurationPredictor(Module):
         # if returning a loss, mask out randomly from an index and have it predict the duration
 
         if return_loss:
-
             rand_frac_index = x.new_zeros(batch).uniform_(0, 1)
             rand_index = (rand_frac_index * lens).long()
 
@@ -317,7 +322,8 @@ class E2TTS(Module):
             atol = 1e-5,
             rtol = 1e-5,
             method = 'midpoint'
-        )
+        ),
+        cond_drop_prob = 0.25
     ):
         super().__init__()
 
@@ -334,7 +340,7 @@ class E2TTS(Module):
         dim = transformer.dim
         self.to_pred = nn.Linear(dim, dim)
 
-        self.embed_text = CharacterEmbed(dim)
+        self.embed_text = CharacterEmbed(dim, cond_drop_prob = cond_drop_prob)
 
         self.duration_predictor = duration_predictor
 
