@@ -32,7 +32,7 @@ duration_predictor = DurationPredictor(
 x = torch.randn(1, 1024, 512)
 duration = torch.randn(1,)
 
-loss = duration_predictor(x, target_duration = duration)
+loss = duration_predictor(x)
 loss.backward()
 
 e2tts = E2TTS(
