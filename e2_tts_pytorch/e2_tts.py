@@ -81,11 +81,18 @@ class Transformer(Module):
         depth,
         cond_on_time = False,
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
+        abs_pos_emb = True,
+        max_seq_len = 8192,
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
     ):
         super().__init__()
         assert divisible_by(depth, 2), 'depth needs to be even'
+
+        # absolute positional embedding
+
+        self.max_seq_len = max_seq_len
+        self.abs_pos_emb = nn.Embedding(max_seq_len, dim) if abs_pos_emb else None
 
         self.dim = dim
         self.skip_connect_type = skip_connect_type
@@ -134,8 +141,16 @@ class Transformer(Module):
         times: Float['b'] | Float[''] | None = None,
         mask: Bool['b n'] | None = None
     ):
-        batch = x.shape[0]
+        batch, seq_len, device = *x.shape[:2], x.device
+
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
+
+        # handle absolute positions if needed
+
+        if exists(self.abs_pos_emb):
+            assert seq_len <= self.max_seq_len, f'{seq_len} exceeds the set `max_seq_len` ({self.max_seq_len}) on Transformer'
+            seq = torch.arange(seq_len, device = device)
+            x = x + self.abs_pos_emb(seq)
 
         # handle adaptive rmsnorm kwargs
 
@@ -192,7 +207,7 @@ class Transformer(Module):
 class DurationPredictor(Module):
     def __init__(
         self,
-        transformer: dict | Transformer
+        transformer: dict | Transformer,
     ):
         super().__init__()
 
