@@ -131,9 +131,10 @@ class Transformer(Module):
     def forward(
         self,
         x: Float['b n d'],
-        times: Int['b'] | None = None,
+        times: Float['b'] | Float[''] | None = None,
         mask: Bool['b n'] | None = None
     ):
+        batch = x.shape[0]
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
 
         # handle adaptive rmsnorm kwargs
@@ -141,6 +142,9 @@ class Transformer(Module):
         norm_kwargs = dict()
 
         if exists(times):
+            if times.ndim == 0:
+                times = repeat(times, ' -> b', b = batch)
+
             times = self.time_cond_mlp(times)
             norm_kwargs.update(condition = times)
 
@@ -227,8 +231,7 @@ class DurationPredictor(Module):
         elif exists(mask):
             lens = mask.sum(dim = -1).long()
         else:
-            full_len = torch.tensor(seq_len, device = device)
-            lens = repeat(full_len, ' -> b', b = batch)
+            lens = torch.full((batch,), seq_len, device = device)
             mask = lens_to_mask(lens, length = seq_len)
 
         # if returning a loss, mask out randomly from an index and have it predict the duration
@@ -302,21 +305,53 @@ class E2TTS(Module):
     @torch.no_grad()
     def sample(
         self,
-        cond,
+        cond: Float['b n d'],
         *,
-        mask: Bool['b n'] | None = None,
-        steps = 3
+        lens: Int['b'] | None = None,
+        duration: int | Int['b'] | None = None,
+        steps = 3,
+        max_duration = 4096 # in case the duration predictor goes haywire
     ):
         self.eval()
-        batch = cond.shape[0]
+        batch, cond_seq_len, device = *cond.shape[:2], cond.device
+
+        # duration
+
+        if not exists(lens):
+            lens = torch.full((batch,), cond_seq_len, device = device, dtype = torch.long)
+
+        cond_mask = lens_to_mask(lens)
+
+        if exists(duration):
+            if isinstance(duration, int):
+                duration = torch.full((batch,), cond_seq_len, device = device, dtype = torch.long)
+
+        elif exists(self.duration_predictor):
+            duration = self.duration_predictor(
+                cond,
+                mask = cond_mask
+            ).long()
+
+        duration = torch.maximum(lens + 1, duration) # just add one token so something is generated
+        duration = duration.clamp(max = max_duration)
+        max_duration = duration.amax()
+
+        cond = F.pad(cond, (0, 0, 0, max_duration - cond_seq_len), value = 0.)
+        cond_mask = F.pad(cond_mask, (0, max_duration - cond_seq_len), value = False)
+
+        mask = lens_to_mask(duration)
 
         # neural ode
 
         def fn(t, x):
-            t = repeat(t, '-> b', b = batch)
+            # at each step, conditioning is fixed
+
+            x = torch.where(cond_mask[..., None], cond, x)
+
+            # predict flow
 
             return self.transformer(
-                cond,
+                x,
                 times = t,
                 mask = mask
             )
