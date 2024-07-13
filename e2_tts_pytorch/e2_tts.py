@@ -264,12 +264,9 @@ class DurationPredictor(Module):
         *,
         text: Int['b n'] | None = None,
         lens: Int['b'] | None = None,
-        mask: Bool['b n'] | None = None,
         return_loss = True
     ):
         batch, seq_len, device = *x.shape[:2], x.device
-
-        assert not (exists(lens) and exists(mask))
 
         # text
 
@@ -278,13 +275,10 @@ class DurationPredictor(Module):
 
         # handle lengths (duration)
 
-        if exists(lens):
-            mask = lens_to_mask(lens, length = seq_len)
-        elif exists(mask):
-            lens = mask.sum(dim = -1).long()
-        else:
+        if not exists(lens):
             lens = torch.full((batch,), seq_len, device = device)
-            mask = lens_to_mask(lens, length = seq_len)
+
+        mask = lens_to_mask(lens, length = seq_len)
 
         # if returning a loss, mask out randomly from an index and have it predict the duration
 
@@ -382,10 +376,7 @@ class E2TTS(Module):
                 duration = torch.full((batch,), cond_seq_len, device = device, dtype = torch.long)
 
         elif exists(self.duration_predictor):
-            duration = self.duration_predictor(
-                cond,
-                mask = cond_mask
-            ).long()
+            duration = self.duration_predictor(cond, lens = lens).long()
 
         duration = torch.maximum(lens + 1, duration) # just add one token so something is generated
         duration = duration.clamp(max = max_duration)
@@ -431,16 +422,13 @@ class E2TTS(Module):
         text: Int['b n'] | None = None,
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
-        mask: Bool['b n'] | None = None
     ):
-        batch, seq_len, dtype, σ = *inp.shape[:2], inp.dtype, self.sigma
+        batch, seq_len, dtype, device, σ = *inp.shape[:2], inp.dtype, self.device, self.sigma
 
-        assert not (exists(lens) and exists(mask))
+        if not exists(lens):
+            lens = torch.full((batch,), seq_len, device = device)
 
-        if exists(lens):
-            mask = lens_to_mask(lens, length = seq_len)
-        elif exists(mask):
-            lens = mask.sum(dim = -1).long()
+        mask = lens_to_mask(lens, length = seq_len)
 
         # text
 
@@ -453,7 +441,7 @@ class E2TTS(Module):
         rand_span_indices = (random_span_frac_indices * default(lens, seq_len)).long()
         rand_span_indices = rand_span_indices.sort(dim = 0).values
 
-        seq = torch.arange(seq_len, device = self.device)
+        seq = torch.arange(seq_len, device = device)
         start, end = rand_span_indices[..., None]
         rand_span_mask = (seq >= start) & (seq <= end)
 
