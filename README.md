@@ -1,7 +1,7 @@
 
 <img src="./e2-tts.png" width="400px"></img>
 
-## E2 TTS - Pytorch (wip)
+## E2 TTS - Pytorch
 
 Implementation of E2-TTS, <a href="https://arxiv.org/abs/2406.18009v1">Embarrassingly Easy Fully Non-Autoregressive Zero-Shot TTS</a>, in Pytorch
 
