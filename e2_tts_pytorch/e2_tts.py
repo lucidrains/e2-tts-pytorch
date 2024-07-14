@@ -235,7 +235,7 @@ class Transformer(Module):
             attn = Attention(dim = dim, heads = heads, dim_head = dim_head, **attn_kwargs)
 
             ff_norm = rmsnorm_klass(dim)
-            ff = FeedForward(dim = dim, **ff_kwargs)
+            ff = FeedForward(dim = dim, glu = True, **ff_kwargs)
 
             skip_proj = nn.Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
 
