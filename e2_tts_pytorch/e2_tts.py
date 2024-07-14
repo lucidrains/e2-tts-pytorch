@@ -33,6 +33,8 @@ from x_transformers import (
     AdaptiveRMSNorm
 )
 
+from x_transformers.x_transformers import RotaryEmbedding
+
 from e2_tts_pytorch.tensor_typing import (
     Float,
     Int,
@@ -189,6 +191,7 @@ class Transformer(Module):
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         abs_pos_emb = True,
         max_seq_len = 8192,
+        dim_head = 64,
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
     ):
@@ -207,6 +210,10 @@ class Transformer(Module):
         self.depth = depth
         self.layers = ModuleList([])
 
+        # rotary embedding
+
+        self.rotary_emb = RotaryEmbedding(dim_head)
+
         # time conditioning
         # will use adaptive rmsnorm
 
@@ -224,7 +231,7 @@ class Transformer(Module):
 
         for _ in range(depth):
             attn_norm = rmsnorm_klass(dim)
-            attn = Attention(dim = dim, **attn_kwargs)
+            attn = Attention(dim = dim, dim_head = dim_head, **attn_kwargs)
 
             ff_norm = rmsnorm_klass(dim)
             ff = FeedForward(dim = dim, **ff_kwargs)
@@ -269,6 +276,10 @@ class Transformer(Module):
             times = self.time_cond_mlp(times)
             norm_kwargs.update(condition = times)
 
+        # rotary embedding
+
+        rotary_pos_emb = self.rotary_emb.forward_from_seq_len(seq_len)
+
         # skip connection related stuff
 
         skip_connect_type = self.skip_connect_type
@@ -301,7 +312,7 @@ class Transformer(Module):
 
             # attention and feedforward blocks
 
-            x = attn(attn_norm(x, **norm_kwargs)) + x
+            x = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb = rotary_pos_emb, mask = mask) + x
             x = ff(ff_norm(x, **norm_kwargs)) + x
 
         assert len(skips) == 0
