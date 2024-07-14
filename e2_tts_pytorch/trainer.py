@@ -11,44 +11,18 @@ from torch.utils.tensorboard import SummaryWriter
 
 import torchaudio
 
-from einops import rearrange, reduce
+from einops import rearrange
 from accelerate import Accelerator
 
 from loguru import logger
 
-class MelSpec(Module):
-    def __init__(
-        self,
-        filter_length=1024,
-        hop_length=256,
-        win_length=1024,
-        n_mel_channels=80,
-        mel_fmin=0,
-        mel_fmax=8000,
-        sampling_rate=22050,
-        normalize=False,
-    ):
-        super().__init__()
-        self.mel_stft = torchaudio.transforms.MelSpectrogram(
-            n_fft=filter_length,
-            hop_length=hop_length,
-            win_length=win_length,
-            power=2,
-            normalized=normalize,
-            sample_rate=sampling_rate,
-            f_min=mel_fmin,
-            f_max=mel_fmax,
-            n_mels=n_mel_channels,
-            norm="slaney",
-        )
-    def forward(self, inp):
-        if len(inp.shape) == 3:
-            inp = inp.squeeze(1)
-        assert len(inp.shape) == 2
-        self.mel_stft = self.mel_stft.to(inp.device)
-        mel = self.mel_stft(inp)
-        mel = torch.log(torch.clamp(mel, min=1e-5))
-        return mel
+from e2_tts_pytorch.e2_tts import (
+    E2TTS,
+    DurationPredictor,
+    MelSpec
+)
+
+# collation
 
 def collate_fn(batch):
     mel_specs = [item['mel_spec'].squeeze(0) for item in batch]
@@ -119,11 +93,17 @@ class HFDataset(Dataset):
 # trainer
 
 class E2Trainer:
-    def __init__(self, model, optimizer, duration_predictor=None,
-                 checkpoint_path=None, log_file="logs.txt",
-                 max_grad_norm=1.0,
-                 sample_rate=22050,
-                 tensorboard_log_dir='runs/e2_tts_experiment'):
+    def __init__(
+        self,
+        model: E2TTS,
+        optimizer,
+        duration_predictor: DurationPredictor | None = None,
+        checkpoint_path = None,
+        log_file = "logs.txt",
+        max_grad_norm = 1.0,
+        sample_rate = 22050,
+        tensorboard_log_dir = 'runs/e2_tts_experiment'
+    ):
         self.target_sample_rate = sample_rate
         self.accelerator = Accelerator(log_with="all")
         self.model = model

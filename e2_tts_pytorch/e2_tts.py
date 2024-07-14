@@ -2,6 +2,8 @@
 ein notation:
 b - batch
 n - sequence
+nt - text sequence
+nw - raw wave length
 d - dimension
 """
 
@@ -15,6 +17,7 @@ import torch.nn.functional as F
 from torch.nn import Module, ModuleList
 from torch.nn.utils.rnn import pad_sequence
 
+import torchaudio
 from torchdiffeq import odeint
 
 import einx
@@ -58,6 +61,9 @@ def list_str_to_tensor(
 
 # tensor helpers
 
+def log(t, eps = 1e-5):
+    return t.clamp(min = eps).log()
+
 def lens_to_mask(
     t: Int['b'],
     length: int | None = None
@@ -82,6 +88,53 @@ def maybe_masked_mean(
     den = reduce(mask.float(), 'b n -> b', 'sum')
 
     return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
+
+# to mel spec
+
+class MelSpec(Module):
+    def __init__(
+        self,
+        filter_length = 1024,
+        hop_length = 256,
+        win_length = 1024,
+        n_mel_channels = 80,
+        mel_fmin = 0,
+        mel_fmax = 8000,
+        sampling_rate = 22050,
+        normalize = False,
+        power = 2,
+        norm = "slaney"
+    ):
+        super().__init__()
+        self.n_mel_channels = n_mel_channels
+
+        self.mel_stft = torchaudio.transforms.MelSpectrogram(
+            n_fft=filter_length,
+            hop_length=hop_length,
+            win_length=win_length,
+            power=power,
+            normalized=normalize,
+            sample_rate=sampling_rate,
+            f_min=mel_fmin,
+            f_max=mel_fmax,
+            n_mels=n_mel_channels,
+            norm=norm,
+        )
+
+        self.register_buffer('dummy', torch.tensor(0), persistent = False)
+
+    def forward(self, inp):
+        if len(inp.shape) == 3:
+            inp = rearrange(inp, 'b 1 nw -> b nw')
+
+        assert len(inp.shape) == 2
+
+        if self.dummy.device != inp.device:
+            self.to(inp.device)
+
+        mel = self.mel_stft(inp)
+        mel = log(mel)
+        return mel
 
 # character embedding
 
@@ -259,6 +312,8 @@ class DurationPredictor(Module):
     def __init__(
         self,
         transformer: dict | Transformer,
+        text_num_embeds = 256,
+        mel_spec_kwargs: dict = dict()
     ):
         super().__init__()
 
@@ -271,7 +326,8 @@ class DurationPredictor(Module):
         self.transformer = transformer
         dim = transformer.dim
 
-        self.embed_text = CharacterEmbed(dim)
+        self.dim = dim
+        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds)
 
         self.to_pred = nn.Sequential(
             nn.Linear(dim, 1, bias = False),
@@ -279,14 +335,25 @@ class DurationPredictor(Module):
             Rearrange('... 1 -> ...')
         )
 
+        # mel spec
+
+        self.mel_spec = MelSpec(**mel_spec_kwargs)
+
     def forward(
         self,
-        x: Float['b n d'],
+        x: Float['b n d'] | Float['b nw'],
         *,
         text: Int['b n'] | List[str] | None = None,
         lens: Int['b'] | None = None,
         return_loss = True
     ):
+        # raw wave
+
+        if x.ndim == 2:
+            x = self.mel_spec(x)
+            x = rearrange(x, 'b d n -> b n d')
+            assert x.shape[-1] == self.dim
+
         batch, seq_len, device = *x.shape[:2], x.device
 
         # text
@@ -342,7 +409,9 @@ class E2TTS(Module):
             rtol = 1e-5,
             method = 'midpoint'
         ),
-        cond_drop_prob = 0.25
+        text_num_embeds = 256,
+        cond_drop_prob = 0.25,
+        mel_spec_kwargs: dict = dict()
     ):
         super().__init__()
 
@@ -356,10 +425,12 @@ class E2TTS(Module):
             duration_predictor = DurationPredictor(**duration_predictor)
 
         self.transformer = transformer
+
         dim = transformer.dim
+        self.dim = dim
         self.to_pred = nn.Linear(dim, dim)
 
-        self.embed_text = CharacterEmbed(dim, cond_drop_prob = cond_drop_prob)
+        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, cond_drop_prob = cond_drop_prob)
 
         self.duration_predictor = duration_predictor
 
@@ -370,6 +441,10 @@ class E2TTS(Module):
         # sampling
 
         self.odeint_kwargs = odeint_kwargs
+
+        # mel spec
+
+        self.mel_spec = MelSpec(**mel_spec_kwargs)
 
     @property
     def device(self):
@@ -409,7 +484,7 @@ class E2TTS(Module):
     @torch.no_grad()
     def sample(
         self,
-        cond: Float['b n d'],
+        cond: Float['b n d'] | Float['b nw'],
         *,
         text: Int['b n'] | List[str] | None = None,
         lens: Int['b'] | None = None,
@@ -419,6 +494,14 @@ class E2TTS(Module):
         max_duration = 4096 # in case the duration predictor goes haywire
     ):
         self.eval()
+
+        # raw wave
+
+        if cond.ndim == 2:
+            cond = self.mel_spec(cond)
+            cond = rearrange(cond, 'b d n -> b n d')
+            assert cond.shape[-1] == self.dim
+
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
 
         # text
@@ -477,12 +560,19 @@ class E2TTS(Module):
 
     def forward(
         self,
-        inp: Float['b n d'], # is mel in paper
+        inp: Float['b n d'] | Float['b nw'], # mel or raw wave
         *,
         text: Int['b nt'] | List[str] | None = None,
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
     ):
+        # handle raw wave
+
+        if inp.ndim == 2:
+            inp = self.mel_spec(inp)
+            inp = rearrange(inp, 'b d n -> b n d')
+            assert inp.shape[-1] == self.dim
+
         batch, seq_len, dtype, device, σ = *inp.shape[:2], inp.dtype, self.device, self.sigma
 
         # handle text as string
