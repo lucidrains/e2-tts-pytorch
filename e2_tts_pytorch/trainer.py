@@ -4,10 +4,7 @@ import os
 from tqdm import tqdm
 
 import torch
-from torch import nn
-from torch.nn import Module
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
@@ -28,12 +25,13 @@ from e2_tts_pytorch.e2_tts import (
 
 def collate_fn(batch):
     mel_specs = [item['mel_spec'].squeeze(0) for item in batch]
-    max_mel_length = max([spec.shape[-1] for spec in mel_specs])
+    mel_lengths = torch.LongTensor([spec.shape[-1] for spec in mel_specs])
+    max_mel_length = mel_lengths.amax()
 
     padded_mel_specs = []
     for spec in mel_specs:
         padding = (0, max_mel_length - spec.size(-1))
-        padded_spec = torch.nn.functional.pad(spec, padding, mode='constant', value=0)
+        padded_spec = F.pad(spec, padding, value = 0)
         padded_mel_specs.append(padded_spec)
     
     mel_specs = torch.stack(padded_mel_specs)
@@ -117,7 +115,7 @@ class E2Trainer:
         self.duration_predictor = duration_predictor
         self.optimizer = optimizer
         self.checkpoint_path = checkpoint_path
-        self.mel_spectrogram = TorchMelSpectrogram(sampling_rate=self.target_sample_rate)
+        self.mel_spectrogram = MelSpec(sampling_rate=self.target_sample_rate)
         self.model, self.optimizer = self.accelerator.prepare(
             self.model, self.optimizer
         )
@@ -155,7 +153,6 @@ class E2Trainer:
             epoch_loss = 0.0
             for batch in progress_bar:
                 text_inputs = batch['text']
-                text_lengths = batch['text_lengths']
                 mel_spec = rearrange(batch['mel'], 'b d n -> b n d')
                 mel_lengths = batch["mel_lengths"]
                 

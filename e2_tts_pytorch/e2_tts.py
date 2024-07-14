@@ -8,7 +8,7 @@ d - dimension
 """
 
 from __future__ import annotations
-from typing import Literal
+from typing import Literal, List
 from random import random
 
 import torch
@@ -21,7 +21,7 @@ import torchaudio
 from torchdiffeq import odeint
 
 import einx
-from einops import einsum, rearrange, repeat, reduce
+from einops import rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
 
 from x_transformers import (

@@ -3,8 +3,7 @@ from torch import Tensor
 from jaxtyping import (
     Float,
     Int,
-    Bool,
-    jaxtyped
+    Bool
 )
 
 # jaxtyping is a misnomer, works for pytorch
