@@ -30,7 +30,7 @@ from e2_tts_pytorch import (
 duration_predictor = DurationPredictor(
     transformer = dict(
         dim = 512,
-        depth = 2,
+        depth = 8,
     )
 )
 
@@ -44,7 +44,7 @@ e2tts = E2TTS(
     duration_predictor = duration_predictor,
     transformer = dict(
         dim = 512,
-        depth = 4,
+        depth = 8,
         skip_connect_type = 'concat'
     ),
 )

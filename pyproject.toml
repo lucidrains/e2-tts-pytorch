@@ -1,6 +1,6 @@
 [project]
 name = "e2-tts-pytorch"
-version = "0.0.25"
+version = "0.0.26"
 description = "E2-TTS in Pytorch"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }

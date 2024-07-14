@@ -186,11 +186,12 @@ class Transformer(Module):
         self,
         *,
         dim,
-        depth,
+        depth = 8,
         cond_on_time = False,
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         abs_pos_emb = True,
         max_seq_len = 8192,
+        heads = 8,
         dim_head = 64,
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
@@ -231,7 +232,7 @@ class Transformer(Module):
 
         for _ in range(depth):
             attn_norm = rmsnorm_klass(dim)
-            attn = Attention(dim = dim, dim_head = dim_head, **attn_kwargs)
+            attn = Attention(dim = dim, heads = heads, dim_head = dim_head, **attn_kwargs)
 
             ff_norm = rmsnorm_klass(dim)
             ff = FeedForward(dim = dim, **ff_kwargs)
