@@ -14,13 +14,7 @@ class E2EDataset(Dataset):
         self.target_sample_rate = 22050
         self.hop_length = 256
         self.mel_spectrogram = TorchMelSpectrogram(sampling_rate=self.target_sample_rate)
-        
-        self.char_set = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?-:;'\"()[] ")
-        self.char_to_id = {char: i for i, char in enumerate(sorted(self.char_set))}
-        self.char_to_id['<unk>'] = len(self.char_to_id)  # Unknown token
-        self.char_to_id['<sos>'] = len(self.char_to_id)  # Start of sequence token
-        self.char_to_id['<eos>'] = len(self.char_to_id)  # End of sequence token
-        self.id_to_char = {i: char for char, i in self.char_to_id.items()}
+
     def __len__(self):
         return len(self.data)
     
