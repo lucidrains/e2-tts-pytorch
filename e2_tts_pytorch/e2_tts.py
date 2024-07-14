@@ -21,8 +21,10 @@ import torchaudio
 from torchdiffeq import odeint
 
 import einx
-from einops import rearrange, repeat, reduce
+from einops import einsum, rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
+
+from scipy.optimize import linear_sum_assignment
 
 from x_transformers import (
     Attention,
@@ -411,7 +413,8 @@ class E2TTS(Module):
         ),
         text_num_embeds = 256,
         cond_drop_prob = 0.25,
-        mel_spec_kwargs: dict = dict()
+        mel_spec_kwargs: dict = dict(),
+        immiscible = False
     ):
         super().__init__()
 
@@ -445,6 +448,10 @@ class E2TTS(Module):
         # mel spec
 
         self.mel_spec = MelSpec(**mel_spec_kwargs)
+
+        # immiscible (diffusion / flow)
+
+        self.immiscible = immiscible
 
     @property
     def device(self):
@@ -606,11 +613,18 @@ class E2TTS(Module):
         x1 = inp
 
         # main conditional flow training logic
-        # just 4 loc
+        # just ~5 loc
 
         # x0 is gaussian noise
 
         x0 = torch.randn_like(x1)
+
+        # whether to use immiscible flow
+
+        if self.immiscible:
+            cost = torch.cdist(x1.flatten(1), x0.flatten(1))
+            _, reorder_indices = linear_sum_assignment(cost)
+            x0 = x0[reorder_indices]
 
         # t is random times from above
 

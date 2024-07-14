@@ -66,3 +66,13 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:270738197}
 }
 ```
+
+```bibtex
+@inproceedings{Li2024ImmiscibleDA,
+    title   = {Immiscible Diffusion: Accelerating Diffusion Training with Noise Assignment},
+    author  = {Yiheng Li and Heyang Jiang and Akio Kodaira and Masayoshi Tomizuka and Kurt Keutzer and Chenfeng Xu},
+    year    = {2024},
+    url     = {https://api.semanticscholar.org/CorpusID:270562607}
+}
+```
+
