@@ -1,5 +1,4 @@
 import torch
-import torch.nn.init as init
 from torch.optim import Adam
 from e2_tts_pytorch.dataset.e2_dataset import E2EDataset
 from e2_tts_pytorch.e2_tts import E2TTS, DurationPredictor
