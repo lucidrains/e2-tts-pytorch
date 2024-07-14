@@ -14,23 +14,16 @@ class TorchMelSpectrogram(nn.Module):
         normalize=False,
     ):
         super().__init__()
-        self.filter_length = filter_length
-        self.hop_length = hop_length
-        self.win_length = win_length
-        self.n_mel_channels = n_mel_channels
-        self.mel_fmin = mel_fmin
-        self.mel_fmax = mel_fmax
-        self.sampling_rate = sampling_rate
         self.mel_stft = torchaudio.transforms.MelSpectrogram(
-            n_fft=self.filter_length,
-            hop_length=self.hop_length,
-            win_length=self.win_length,
+            n_fft=filter_length,
+            hop_length=hop_length,
+            win_length=win_length,
             power=2,
             normalized=normalize,
-            sample_rate=self.sampling_rate,
-            f_min=self.mel_fmin,
-            f_max=self.mel_fmax,
-            n_mels=self.n_mel_channels,
+            sample_rate=sampling_rate,
+            f_min=mel_fmin,
+            f_max=mel_fmax,
+            n_mels=n_mel_channels,
             norm="slaney",
         )
     def forward(self, inp):
