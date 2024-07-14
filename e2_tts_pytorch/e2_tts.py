@@ -8,7 +8,7 @@ d - dimension
 """
 
 from __future__ import annotations
-from typing import Literal, List
+from typing import Literal, List, Callable
 from random import random
 
 import torch
@@ -497,8 +497,9 @@ class E2TTS(Module):
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
         steps = 3,
-        cfg_strength = 1.,  # they used a classifier free guidance strenght of 1.
-        max_duration = 4096 # in case the duration predictor goes haywire
+        cfg_strength = 1.,   # they used a classifier free guidance strenght of 1.
+        max_duration = 4096, # in case the duration predictor goes haywire
+        vocoder: Callable[['b d n'], Float['b nw']] | None = None
     ):
         self.eval()
 
@@ -563,7 +564,13 @@ class E2TTS(Module):
         trajectory = odeint(fn, y0, t, **self.odeint_kwargs)
         sampled = trajectory[-1]
 
-        return sampled
+        out = sampled
+
+        if exists(vocoder):
+            out = rearrange(out, 'b n d -> b d n')
+            out = vocoder(out)
+
+        return out
 
     def forward(
         self,
