@@ -51,11 +51,16 @@ def collate_fn(batch):
 # dataset
 
 class HFDataset(Dataset):
-    def __init__(self, hf_dataset: Dataset):
+    def __init__(
+        self,
+        hf_dataset: Dataset,
+        target_sample_rate = 22050,
+        hop_length = 256
+    ):
         self.data = hf_dataset
-        self.target_sample_rate = 22050
-        self.hop_length = 256
-        self.mel_spectrogram = MelSpec(sampling_rate=self.target_sample_rate)
+        self.target_sample_rate = target_sample_rate
+        self.hop_length = hop_length
+        self.mel_spectrogram = MelSpec(sampling_rate=target_sample_rate)
 
     def __len__(self):
         return len(self.data)
@@ -143,6 +148,7 @@ class E2Trainer:
         train_dataloader = self.accelerator.prepare(train_dataloader)
         start_step = self.load_checkpoint()
         global_step = start_step
+
         for epoch in range(epochs):
             self.model.train()
             progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{epochs}", unit="step", disable=not self.accelerator.is_local_main_process)
