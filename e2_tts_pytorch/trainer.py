@@ -14,8 +14,7 @@ import torchaudio
 from einops import rearrange, reduce
 from accelerate import Accelerator
 
-import logging
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 class MelSpec(Module):
     def __init__(
@@ -53,9 +52,8 @@ class MelSpec(Module):
 
 def collate_fn(batch):
     mel_specs = [item['mel_spec'].squeeze(0) for item in batch]
-    mel_lengths = torch.LongTensor([spec.shape[-1] for spec in mel_specs])
-    
-    max_mel_length = mel_lengths.max().item()
+    max_mel_length = max([spec.shape[-1] for spec in mel_specs])
+
     padded_mel_specs = []
     for spec in mel_specs:
         padding = (0, max_mel_length - spec.size(-1))
@@ -66,13 +64,13 @@ def collate_fn(batch):
 
     text = [item['text'] for item in batch]
     text_lengths = torch.LongTensor([len(item) for item in text])
-    batch_dict = {
-        'mel': mel_specs,
-        'mel_lengths': mel_lengths,
-        'text': text,
-        'text_lengths': text_lengths,
-    }
-    return batch_dict
+
+    return dict(
+        mel = mel_specs,
+        mel_lengths = mel_lengths,
+        text = text,
+        text_lengths = text_lengths,
+    )
 
 # dataset
 
@@ -89,10 +87,12 @@ class HFDataset(Dataset):
     def __getitem__(self, index):
         row = self.data[index]
         audio = row['audio']['array']
+
         logger.info(f"Audio shape: {audio.shape}")
+
         sample_rate = row['audio']['sampling_rate']
         duration = audio.shape[-1] / sample_rate
-        
+
         if duration > 20 or duration < 0.3:
             logger.warning(f"Skipping due to duration out of bound: {duration}")
             return self.__getitem__((index + 1) % len(self.data))
@@ -111,10 +111,11 @@ class HFDataset(Dataset):
         
         text = row['transcript']
         
-        return {
-            'mel_spec': mel_spec,
-            'text': text,
-        }
+        return dict(
+            mel_spec = mel_spec,
+            text = text,
+        )
+
 # trainer
 
 class E2Trainer:
@@ -133,12 +134,6 @@ class E2Trainer:
         self.model, self.optimizer = self.accelerator.prepare(
             self.model, self.optimizer
         )
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        handler = logging.FileHandler(log_file)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        self.logger.addHandler(handler)
         self.max_grad_norm = max_grad_norm
         
         self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
@@ -190,7 +185,7 @@ class E2Trainer:
                 self.optimizer.zero_grad()
                 
                 if self.accelerator.is_local_main_process:
-                    self.logger.info(f"Step {global_step+1}: E2E Loss = {loss.item():.4f}")
+                    logger.info(f"Step {global_step+1}: Loss = {loss.item():.4f}")
                     self.writer.add_scalar('E2E Loss', loss.item(), global_step)
                 
                 global_step += 1
@@ -202,7 +197,7 @@ class E2Trainer:
             
             epoch_loss /= len(train_dataloader)
             if self.accelerator.is_local_main_process:
-                self.logger.info(f"Epoch {epoch+1}/{epochs} - Average E2E Loss = {epoch_loss:.4f}")
+                logger.info(f"Epoch {epoch+1}/{epochs} - Average Loss = {epoch_loss:.4f}")
                 self.writer.add_scalar('Epoch Average Loss', epoch_loss, epoch)
         
         self.writer.close()
