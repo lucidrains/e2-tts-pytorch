@@ -31,7 +31,7 @@ duration_predictor = DurationPredictor(
 )
 
 mel = torch.randn(2, 1024, 512)
-text = torch.randint(0, 256, (2, 512)) # use -1 for padding
+text = ['Hello', 'Goodbye']
 
 loss = duration_predictor(mel, text = text)
 loss.backward()

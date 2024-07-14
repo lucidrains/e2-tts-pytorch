@@ -13,6 +13,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from torch.nn import Module, ModuleList
+from torch.nn.utils.rnn import pad_sequence
 
 from torchdiffeq import odeint
 
@@ -43,6 +44,17 @@ def default(v, d):
 
 def divisible_by(num, den):
     return (num % den) == 0
+
+# simple utf-8 tokenizer, since paper went character based
+
+def list_str_to_tensor(
+    text: List[str],
+    padding_value = -1
+) -> Int['b nt']:
+
+    list_tensors = [torch.tensor([*bytes(t, 'UTF-8')]) for t in text]
+    text = pad_sequence(list_tensors, padding_value = -1, batch_first = True)
+    return text
 
 # tensor helpers
 
@@ -271,7 +283,7 @@ class DurationPredictor(Module):
         self,
         x: Float['b n d'],
         *,
-        text: Int['b n'] | None = None,
+        text: Int['b n'] | List[str] | None = None,
         lens: Int['b'] | None = None,
         return_loss = True
     ):
@@ -280,6 +292,9 @@ class DurationPredictor(Module):
         # text
 
         if exists(text):
+            if isinstance(text, list):
+                text = list_str_to_tensor(text).to(device)
+
             x = self.embed_text(x, text)
 
         # handle lengths (duration)
@@ -395,7 +410,7 @@ class E2TTS(Module):
         self,
         cond: Float['b n d'],
         *,
-        text: Int['b n'] | None = None,
+        text: Int['b n'] | List[str] | None = None,
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
         steps = 3,
@@ -404,6 +419,11 @@ class E2TTS(Module):
     ):
         self.eval()
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
+
+        # text
+
+        if isinstance(text, list):
+            text = list_str_to_tensor(text).to(device)
 
         # duration
 
@@ -457,11 +477,18 @@ class E2TTS(Module):
         self,
         inp: Float['b n d'], # is mel in paper
         *,
-        text: Int['b nt'] | None = None,
+        text: Int['b nt'] | List[str] | None = None,
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
     ):
         batch, seq_len, dtype, device, σ = *inp.shape[:2], inp.dtype, self.device, self.sigma
+
+        # handle text as string
+
+        if isinstance(text, list):
+            text = list_str_to_tensor(text).to(device)
+
+        # lens and mask
 
         if not exists(lens):
             lens = torch.full((batch,), seq_len, device = device)
