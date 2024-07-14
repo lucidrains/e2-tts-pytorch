@@ -21,6 +21,12 @@ from e2_tts_pytorch.e2_tts import (
     MelSpec
 )
 
+def exists(v):
+    return v is not None
+
+def default(v, d):
+    return v if exists(v) else d
+
 # collation
 
 def collate_fn(batch):
@@ -107,14 +113,22 @@ class E2Trainer:
         log_file = "logs.txt",
         max_grad_norm = 1.0,
         sample_rate = 22050,
-        tensorboard_log_dir = 'runs/e2_tts_experiment'
+        tensorboard_log_dir = 'runs/e2_tts_experiment',
+        accelerate_kwargs: dict = dict()
     ):
+        logger.add(log_file)
+
+        self.accelerator = Accelerator(
+            log_with="all",
+            **accelerate_kwargs
+        )
+
         self.target_sample_rate = sample_rate
-        self.accelerator = Accelerator(log_with="all")
         self.model = model
         self.duration_predictor = duration_predictor
         self.optimizer = optimizer
-        self.checkpoint_path = checkpoint_path
+        self.checkpoint_path = default(checkpoint_path, 'model.pth')
+
         self.mel_spectrogram = MelSpec(sampling_rate=self.target_sample_rate)
         self.model, self.optimizer = self.accelerator.prepare(
             self.model, self.optimizer
@@ -124,24 +138,27 @@ class E2Trainer:
         self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
 
     def save_checkpoint(self, step, finetune=False):
-        if self.checkpoint_path is None:
-            self.checkpoint_path = "model.pth"
-        checkpoint = {
-            'model_state_dict': self.accelerator.unwrap_model(self.model).state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'step': step
-        }
+
+        checkpoint = dict(
+            model_state_dict = self.accelerator.unwrap_model(self.model).state_dict(),
+            optimizer_state_dict = self.optimizer.state_dict(),
+            step = step
+        )
+
         torch.save(checkpoint, self.checkpoint_path)
 
     def load_checkpoint(self):
-        if self.checkpoint_path is not None and os.path.exists(self.checkpoint_path):
-            checkpoint = torch.load(self.checkpoint_path)
-            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint['model_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            return checkpoint['step']
-        return 0
+        if not exists(self.checkpoint_path) or not os.path.exists(self.checkpoint_path):
+            return 0
+
+        checkpoint = torch.load(self.checkpoint_path)
+        self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        return checkpoint['step']
 
     def train(self, train_dataset, epochs, batch_size, grad_accumulation_steps=1, num_workers=12, save_step=1000):
+        # (todo) gradient accumulation needs to be accounted for
+
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True, num_workers=num_workers, pin_memory=True)
         train_dataloader = self.accelerator.prepare(train_dataloader)
         start_step = self.load_checkpoint()
@@ -151,6 +168,7 @@ class E2Trainer:
             self.model.train()
             progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{epochs}", unit="step", disable=not self.accelerator.is_local_main_process)
             epoch_loss = 0.0
+
             for batch in progress_bar:
                 text_inputs = batch['text']
                 mel_spec = rearrange(batch['mel'], 'b d n -> b n d')
