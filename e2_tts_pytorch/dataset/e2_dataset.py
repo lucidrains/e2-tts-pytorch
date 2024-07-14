@@ -1,7 +1,7 @@
 import torch
 from torch.utils.data import Dataset
 import torchaudio
-from utils.compute_mel import TorchMelSpectrogram
+from e2_tts_pytorch.utils.compute_mel import TorchMelSpectrogram
 from datasets import load_dataset
 from tokenizers import Tokenizer
 import logging

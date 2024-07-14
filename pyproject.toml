@@ -1,6 +1,6 @@
 [project]
 name = "e2-tts-pytorch"
-version = "0.0.3"
+version = "0.0.12"
 description = "E2-TTS in Pytorch"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -32,7 +32,7 @@ dependencies = [
     'x-transformers>=1.31.12'
     'accelerate>=0.32.1'
     'datasets>=2.20.0'
-    'tqdm>=4.65.0'
+    'tqdm>=4.65.0',
     'tokenizers>=0.19.1'
 ]
 

@@ -1,12 +1,13 @@
 import torch
+import torch.nn.init as init
 from torch.optim import Adam
-from e2_dataset import E2EDataset
+from e2_tts_pytorch.dataset.e2_dataset import E2EDataset
 from e2_tts_pytorch.e2_tts import E2TTS, DurationPredictor
-from e2_trainer import E2Trainer
+from e2_tts_pytorch.trainer.e2_trainer import E2Trainer
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-tokenizer_path = "vocab.json"
+tokenizer_path = "/home/azureuser/e2/e2-tts-pytorch/e2_tts_pytorch/assets/vocab.json"
 
 train_dataset = E2EDataset("MushanW/GLOBE", tokenizer_path)
 

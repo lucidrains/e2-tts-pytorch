@@ -7,6 +7,7 @@ d - dimension
 
 from __future__ import annotations
 from typing import Literal
+from random import random
 
 import torch
 from torch import nn
@@ -70,6 +71,44 @@ def maybe_masked_mean(
 
     return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
 
+# character embedding
+
+class CharacterEmbed(Module):
+    def __init__(
+        self,
+        dim,
+        num_embeds = 256,
+        cond_drop_prob = 0.
+    ):
+        super().__init__()
+        self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
+        self.combine = nn.Linear(dim * 2, dim)
+        self.cond_drop_prob = cond_drop_prob
+
+    def forward(
+        self,
+        x: Float['b n d'],
+        text: Int['b n'],
+        drop_text_cond = None
+    ):
+        drop_text_cond = default(drop_text_cond, self.training and random() < self.cond_drop_prob)
+
+        if drop_text_cond:
+            return x
+
+        max_seq_len = x.shape[1]
+        text_mask = text == -1
+
+        text = text + 1 # use 0 as filler token
+        text = text.masked_fill(text_mask, 0)
+
+        text = text[:, :max_seq_len] # just curtail if character tokens are more than the mel spec tokens, one of the edge cases the paper did not address
+        text = F.pad(text, (0, max_seq_len - text.shape[1]), value = 0)
+        text_embed = self.embed(text)
+
+        concatted = torch.cat((x, text_embed), dim = -1)
+        return self.combine(concatted)
+
 # attention and transformer backbone
 # for use in both e2tts as well as duration module
 
@@ -81,11 +120,18 @@ class Transformer(Module):
         depth,
         cond_on_time = False,
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
+        abs_pos_emb = True,
+        max_seq_len = 8192,
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
     ):
         super().__init__()
         assert divisible_by(depth, 2), 'depth needs to be even'
+
+        # absolute positional embedding
+
+        self.max_seq_len = max_seq_len
+        self.abs_pos_emb = nn.Embedding(max_seq_len, dim) if abs_pos_emb else None
 
         self.dim = dim
         self.skip_connect_type = skip_connect_type
@@ -131,16 +177,28 @@ class Transformer(Module):
     def forward(
         self,
         x: Float['b n d'],
-        times: Int['b'] | None = None,
+        times: Float['b'] | Float[''] | None = None,
         mask: Bool['b n'] | None = None
     ):
+        batch, seq_len, device = *x.shape[:2], x.device
+
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
+
+        # handle absolute positions if needed
+
+        if exists(self.abs_pos_emb):
+            assert seq_len <= self.max_seq_len, f'{seq_len} exceeds the set `max_seq_len` ({self.max_seq_len}) on Transformer'
+            seq = torch.arange(seq_len, device = device)
+            x = x + self.abs_pos_emb(seq)
 
         # handle adaptive rmsnorm kwargs
 
         norm_kwargs = dict()
 
         if exists(times):
+            if times.ndim == 0:
+                times = repeat(times, ' -> b', b = batch)
+
             times = self.time_cond_mlp(times)
             norm_kwargs.update(condition = times)
 
@@ -188,7 +246,7 @@ class Transformer(Module):
 class DurationPredictor(Module):
     def __init__(
         self,
-        transformer: dict | Transformer
+        transformer: dict | Transformer,
     ):
         super().__init__()
 
@@ -199,8 +257,9 @@ class DurationPredictor(Module):
             )
 
         self.transformer = transformer
-
         dim = transformer.dim
+
+        self.embed_text = CharacterEmbed(dim)
 
         self.to_pred = nn.Sequential(
             nn.Linear(dim, 1, bias = False),
@@ -212,16 +271,34 @@ class DurationPredictor(Module):
         self,
         x: Float['b n d'],
         *,
-        lens: Int['b'] = None,
-        mask: Bool['b n'] = None,
-        target_duration: Int['b'] = None
+        text: Int['b n'] | None = None,
+        lens: Int['b'] | None = None,
+        return_loss = True
     ):
-        seq_len = x.shape[1]
+        batch, seq_len, device = *x.shape[:2], x.device
 
-        assert not (exists(lens) and exists(mask))
+        # text
 
-        if exists(lens):
-            mask = lens_to_mask(lens, length = seq_len)
+        if exists(text):
+            x = self.embed_text(x, text)
+
+        # handle lengths (duration)
+
+        if not exists(lens):
+            lens = torch.full((batch,), seq_len, device = device)
+
+        mask = lens_to_mask(lens, length = seq_len)
+
+        # if returning a loss, mask out randomly from an index and have it predict the duration
+
+        if return_loss:
+            rand_frac_index = x.new_zeros(batch).uniform_(0, 1)
+            rand_index = (rand_frac_index * lens).long()
+
+            seq = torch.arange(seq_len, device = device)
+            mask &= einx.less('n, b -> b n', seq, rand_index)
+
+        # attending
 
         x = self.transformer(x, mask = mask)
 
@@ -229,10 +306,14 @@ class DurationPredictor(Module):
 
         pred = self.to_pred(x)
 
-        if not exists(target_duration):
+        # return the prediction if not returning loss
+
+        if not return_loss:
             return pred
 
-        return F.mse_loss(pred, target_duration.float())
+        # loss
+
+        return F.mse_loss(pred, lens.float())
 
 class E2TTS(Module):
     def __init__(
@@ -244,7 +325,8 @@ class E2TTS(Module):
             atol = 1e-5,
             rtol = 1e-5,
             method = 'midpoint'
-        )
+        ),
+        cond_drop_prob = 0.25
     ):
         super().__init__()
 
@@ -258,10 +340,12 @@ class E2TTS(Module):
             duration_predictor = DurationPredictor(**duration_predictor)
 
         self.transformer = transformer
-        self.duration_predictor = duration_predictor
-
         dim = transformer.dim
         self.to_pred = nn.Linear(dim, dim)
+
+        self.embed_text = CharacterEmbed(dim, cond_drop_prob = cond_drop_prob)
+
+        self.duration_predictor = duration_predictor
 
         # conditional flow related
 
@@ -275,26 +359,90 @@ class E2TTS(Module):
     def device(self):
         return next(self.parameters()).device
 
+    def transformer_with_pred_head(
+        self,
+        x: Float['b n d'],
+        times: Float['b'],
+        mask: Bool['b n'] | None = None,
+        text: Int['b nt'] | None = None,
+        drop_text_cond: bool | None = None
+    ):
+
+        if exists(text):
+            x = self.embed_text(x, text, drop_text_cond = drop_text_cond)
+
+        attended = self.transformer(
+            x,
+            times = times,
+            mask = mask
+        )
+
+        return self.to_pred(attended)
+
+    def cfg_transformer_with_pred_head(
+        self,
+        *args,
+        cfg_strength: float = 1.,
+        **kwargs,
+    ):
+        pred = self.transformer_with_pred_head(*args, drop_text_cond = False, **kwargs)
+        null_pred = self.transformer_with_pred_head(*args, drop_text_cond = True, **kwargs)
+
+        return pred + (pred - null_pred) * cfg_strength
+
     @torch.no_grad()
     def sample(
         self,
-        cond,
+        cond: Float['b n d'],
         *,
-        mask: Bool['b n'] | None = None,
-        steps = 3
+        text: Int['b n'] | None = None,
+        lens: Int['b'] | None = None,
+        duration: int | Int['b'] | None = None,
+        steps = 3,
+        cfg_strength = 1.,  # they used a classifier free guidance strenght of 1.
+        max_duration = 4096 # in case the duration predictor goes haywire
     ):
         self.eval()
-        batch = cond.shape[0]
+        batch, cond_seq_len, device = *cond.shape[:2], cond.device
+
+        # duration
+
+        if not exists(lens):
+            lens = torch.full((batch,), cond_seq_len, device = device, dtype = torch.long)
+
+        cond_mask = lens_to_mask(lens)
+
+        if exists(duration):
+            if isinstance(duration, int):
+                duration = torch.full((batch,), cond_seq_len, device = device, dtype = torch.long)
+
+        elif exists(self.duration_predictor):
+            duration = self.duration_predictor(cond, lens = lens).long()
+
+        duration = torch.maximum(lens + 1, duration) # just add one token so something is generated
+        duration = duration.clamp(max = max_duration)
+        max_duration = duration.amax()
+
+        cond = F.pad(cond, (0, 0, 0, max_duration - cond_seq_len), value = 0.)
+        cond_mask = F.pad(cond_mask, (0, max_duration - cond_seq_len), value = False)
+
+        mask = lens_to_mask(duration)
 
         # neural ode
 
         def fn(t, x):
-            t = repeat(t, '-> b', b = batch)
+            # at each step, conditioning is fixed
 
-            return self.transformer(
-                cond,
+            x = torch.where(cond_mask[..., None], cond, x)
+
+            # predict flow
+
+            return self.cfg_transformer_with_pred_head(
+                x,
                 times = t,
-                mask = mask
+                text = text,
+                mask = mask,
+                cfg_strength = cfg_strength
             )
 
         y0 = torch.randn_like(cond)
@@ -307,42 +455,35 @@ class E2TTS(Module):
 
     def forward(
         self,
-        x: Float['b n d'],
-        text: Int['b n'],
+        inp: Float['b n d'], # is mel in paper
+        *,
+        text: Int['b nt'] | None = None,
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
-        mask: Bool['b n'] | None = None,
-        return_loss = True
     ):
-        batch, seq_len, dtype, σ = *x.shape[:2], x.dtype, self.sigma
+        batch, seq_len, dtype, device, σ = *inp.shape[:2], inp.dtype, self.device, self.sigma
 
-        assert not (exists(lens) and exists(mask))
+        if not exists(lens):
+            lens = torch.full((batch,), seq_len, device = device)
 
-        if exists(lens):
-            mask = lens_to_mask(lens, length = seq_len)
+        mask = lens_to_mask(lens, length = seq_len)
 
-        if return_loss:
-            self.train()
+        # get a random span to mask out for training conditionally
 
-        # if times were not passed in, instantiate random times for training
+        random_span_frac_indices = inp.new_zeros(2, batch).uniform_(0, 1)
+        rand_span_indices = (random_span_frac_indices * default(lens, seq_len)).long()
+        rand_span_indices = rand_span_indices.sort(dim = 0).values
 
-        if not exists(times):
-            assert return_loss, 'you must be training if `times` is not passed in'
-            times = torch.rand((batch,), dtype = dtype, device = self.device)
+        seq = torch.arange(seq_len, device = device)
+        start, end = rand_span_indices[..., None]
+        rand_span_mask = (seq >= start) & (seq <= end)
 
-        # transformer and prediction head
-        x = self.transformer(
-            x,
-            times = times,
-            mask = mask
-        )
+        if exists(mask):
+            rand_span_mask &= mask
 
-        pred = self.to_pred(x)
+        # mel is x1
 
-        if not return_loss:
-            return pred
-
-        x1 = pred
+        x1 = inp
 
         # main conditional flow training logic
         # just 4 loc
@@ -353,6 +494,7 @@ class E2TTS(Module):
 
         # t is random times from above
 
+        times = torch.rand((batch,), dtype = dtype, device = self.device)
         t = rearrange(times, 'b -> b 1 1')
 
         # sample xt (w in the paper)
@@ -361,11 +503,21 @@ class E2TTS(Module):
 
         flow = x1 - (1 - σ) * x0
 
+        # only predict what is within the random mask span for infilling
+
+        w = torch.where(
+            rand_span_mask[..., None],
+            w, x1
+        )
+
+        # transformer and prediction head
+
+        pred = self.transformer_with_pred_head(w, times = times, text = text)
+
         # flow matching loss
 
         loss = F.mse_loss(pred, flow, reduction = 'none')
 
-        if exists(mask):
-            loss = loss[mask]
+        loss = loss[rand_span_mask]
 
         return loss.mean()

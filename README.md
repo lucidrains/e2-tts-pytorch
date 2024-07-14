@@ -17,6 +17,7 @@ $ pip install e2-tts-pytorch
 
 ```python
 import torch
+
 from e2_tts_pytorch import (
     E2TTS,
     DurationPredictor
@@ -29,10 +30,10 @@ duration_predictor = DurationPredictor(
     )
 )
 
-x = torch.randn(1, 1024, 512)
-duration = torch.randn(1,)
+mel = torch.randn(2, 1024, 512)
+text = torch.randint(0, 256, (2, 512)) # use -1 for padding
 
-loss = duration_predictor(x, target_duration = duration)
+loss = duration_predictor(mel, text = text)
 loss.backward()
 
 e2tts = E2TTS(
@@ -44,10 +45,11 @@ e2tts = E2TTS(
     ),
 )
 
-loss = e2tts(x)
+loss = e2tts(mel, text = text)
 loss.backward()
 
-sampled = e2tts.sample(x)
+sampled = e2tts.sample(mel[:, :5], text = text)
+
 ```
 
 ## Citations
