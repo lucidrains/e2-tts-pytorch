@@ -7,6 +7,10 @@ Implementation of E2-TTS, <a href="https://arxiv.org/abs/2406.18009v1">Embarrass
 
 You can chat with other researchers about this work <a href="https://discord.gg/XXHAarGSEH">here</a>
 
+## Appreciation
+
+- <a href="https://github.com/manmay-nakhashi">Manmay</a> for contributing <a href="https://github.com/lucidrains/e2-tts-pytorch/pull/1">working end-to-end training code</a>!
+
 ## Install
 
 ```bash

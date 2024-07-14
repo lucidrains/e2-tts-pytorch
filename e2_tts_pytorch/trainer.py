@@ -1,14 +1,121 @@
-import torch
-from torch.utils.data import DataLoader
-from tqdm import tqdm
-from torch.nn import functional as F
-from accelerate import Accelerator
-from e2_tts_pytorch.dataset.e2_collate import collate_fn
 import os
-import logging
-from e2_tts_pytorch.utils.compute_mel import TorchMelSpectrogram
-from einops import rearrange
+from tqdm import tqdm
+
+import torch
+from torch import nn
+from torch.nn import Module
+import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
+from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
+
+import torchaudio
+
+from einops import rearrange, reduce
+from accelerate import Accelerator
+
+import logging
+logger = logging.getLogger(__name__)
+
+class MelSpec(Module):
+    def __init__(
+        self,
+        filter_length=1024,
+        hop_length=256,
+        win_length=1024,
+        n_mel_channels=80,
+        mel_fmin=0,
+        mel_fmax=8000,
+        sampling_rate=22050,
+        normalize=False,
+    ):
+        super().__init__()
+        self.mel_stft = torchaudio.transforms.MelSpectrogram(
+            n_fft=filter_length,
+            hop_length=hop_length,
+            win_length=win_length,
+            power=2,
+            normalized=normalize,
+            sample_rate=sampling_rate,
+            f_min=mel_fmin,
+            f_max=mel_fmax,
+            n_mels=n_mel_channels,
+            norm="slaney",
+        )
+    def forward(self, inp):
+        if len(inp.shape) == 3:
+            inp = inp.squeeze(1)
+        assert len(inp.shape) == 2
+        self.mel_stft = self.mel_stft.to(inp.device)
+        mel = self.mel_stft(inp)
+        mel = torch.log(torch.clamp(mel, min=1e-5))
+        return mel
+
+def collate_fn(batch):
+    mel_specs = [item['mel_spec'].squeeze(0) for item in batch]
+    mel_lengths = torch.LongTensor([spec.shape[-1] for spec in mel_specs])
+    
+    max_mel_length = mel_lengths.max().item()
+    padded_mel_specs = []
+    for spec in mel_specs:
+        padding = (0, max_mel_length - spec.size(-1))
+        padded_spec = torch.nn.functional.pad(spec, padding, mode='constant', value=0)
+        padded_mel_specs.append(padded_spec)
+    
+    mel_specs = torch.stack(padded_mel_specs)
+
+    text = [item['text'] for item in batch]
+    text_lengths = torch.LongTensor([len(item) for item in text])
+    batch_dict = {
+        'mel': mel_specs,
+        'mel_lengths': mel_lengths,
+        'text': text,
+        'text_lengths': text_lengths,
+    }
+    return batch_dict
+
+# dataset
+
+class HFDataset(Dataset):
+    def __init__(self, hf_dataset: Dataset):
+        self.data = hf_dataset
+        self.target_sample_rate = 22050
+        self.hop_length = 256
+        self.mel_spectrogram = MelSpec(sampling_rate=self.target_sample_rate)
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, index):
+        row = self.data[index]
+        audio = row['audio']['array']
+        logger.info(f"Audio shape: {audio.shape}")
+        sample_rate = row['audio']['sampling_rate']
+        duration = audio.shape[-1] / sample_rate
+        
+        if duration > 20 or duration < 0.3:
+            logger.warning(f"Skipping due to duration out of bound: {duration}")
+            return self.__getitem__((index + 1) % len(self.data))
+        
+        audio_tensor = torch.from_numpy(audio).float()
+        
+        if sample_rate != self.target_sample_rate:
+            resampler = torchaudio.transforms.Resample(sample_rate, self.target_sample_rate)
+            audio_tensor = resampler(audio_tensor)
+        
+        audio_tensor = rearrange(audio_tensor, 't -> 1 t')
+        
+        mel_spec = self.mel_spectrogram(audio_tensor)
+        
+        mel_spec = rearrange(mel_spec, '1 d t -> d t')
+        
+        text = row['transcript']
+        
+        return {
+            'mel_spec': mel_spec,
+            'text': text,
+        }
+# trainer
 
 class E2Trainer:
     def __init__(self, model, optimizer, duration_predictor=None,
