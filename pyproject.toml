@@ -33,7 +33,6 @@ dependencies = [
     'accelerate>=0.32.1',
     'datasets>=2.20.0',
     'tqdm>=4.65.0',
-    'tokenizers>=0.19.1',
     'torchaudio>=2.3.1'
 ]
 

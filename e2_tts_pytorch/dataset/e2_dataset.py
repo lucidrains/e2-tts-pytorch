@@ -3,20 +3,24 @@ from torch.utils.data import Dataset
 import torchaudio
 from e2_tts_pytorch.utils.compute_mel import TorchMelSpectrogram
 from datasets import load_dataset
-from tokenizers import Tokenizer
 import logging
 from einops import rearrange, reduce
 
 logger = logging.getLogger(__name__)
 
 class E2EDataset(Dataset):
-    def __init__(self, hf_dataset, tokenizer_path):
+    def __init__(self, hf_dataset):
         self.data = load_dataset(hf_dataset, split='train')
-        self.tokenizer = Tokenizer.from_file(tokenizer_path)
         self.target_sample_rate = 22050
         self.hop_length = 256
         self.mel_spectrogram = TorchMelSpectrogram(sampling_rate=self.target_sample_rate)
-
+        
+        self.char_set = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?-:;'\"()[] ")
+        self.char_to_id = {char: i for i, char in enumerate(sorted(self.char_set))}
+        self.char_to_id['<unk>'] = len(self.char_to_id)  # Unknown token
+        self.char_to_id['<sos>'] = len(self.char_to_id)  # Start of sequence token
+        self.char_to_id['<eos>'] = len(self.char_to_id)  # End of sequence token
+        self.id_to_char = {i: char for char, i in self.char_to_id.items()}
     def __len__(self):
         return len(self.data)
     
@@ -45,13 +49,22 @@ class E2EDataset(Dataset):
         
         text = row['transcript']
         text = text.replace(" ", "[SPACE]")
-        text_tokens = self.tokenize_text(text)
+        text_tokens = self.encode(text)
         
         return {
             'mel_spec': mel_spec,
             'text': text_tokens,
         }
 
-    def tokenize_text(self, text):
-        output = self.tokenizer.encode(text)
-        return output.ids
+    def encode(self, text):
+        tokens = [self.char_to_id['<sos>']]
+        for char in text:
+            if char in self.char_to_id:
+                tokens.append(self.char_to_id[char])
+            else:
+                tokens.append(self.char_to_id['<unk>'])
+        tokens.append(self.char_to_id['<eos>'])
+        return torch.tensor(tokens, dtype=torch.long)
+
+    def decode(self, token_ids):
+        return ''.join([self.id_to_char[id.item()] for id in token_ids])
