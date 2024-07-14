@@ -16,8 +16,6 @@ def collate_fn(batch):
 
     text = [item['text'] for item in batch]
     text_lengths = torch.LongTensor([len(item) for item in text])
-    text = pad_sequence([torch.LongTensor(item) for item in text], batch_first=True)
-
     batch_dict = {
         'mel': mel_specs,
         'mel_lengths': mel_lengths,

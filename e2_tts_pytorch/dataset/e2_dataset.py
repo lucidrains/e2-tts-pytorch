@@ -48,23 +48,8 @@ class E2EDataset(Dataset):
         mel_spec = rearrange(mel_spec, '1 d t -> d t')
         
         text = row['transcript']
-        text = text.replace(" ", "[SPACE]")
-        text_tokens = self.encode(text)
         
         return {
             'mel_spec': mel_spec,
-            'text': text_tokens,
+            'text': text,
         }
-
-    def encode(self, text):
-        tokens = [self.char_to_id['<sos>']]
-        for char in text:
-            if char in self.char_to_id:
-                tokens.append(self.char_to_id[char])
-            else:
-                tokens.append(self.char_to_id['<unk>'])
-        tokens.append(self.char_to_id['<eos>'])
-        return torch.tensor(tokens, dtype=torch.long)
-
-    def decode(self, token_ids):
-        return ''.join([self.id_to_char[id.item()] for id in token_ids])
