@@ -35,6 +35,8 @@ from x_transformers import (
 
 from x_transformers.x_transformers import RotaryEmbedding
 
+from gateloop_transformer import SimpleGateLoopLayer
+
 from e2_tts_pytorch.tensor_typing import (
     Float,
     Int,
@@ -193,6 +195,7 @@ class Transformer(Module):
         max_seq_len = 8192,
         heads = 8,
         dim_head = 64,
+        num_gateloop_layers = 1,
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
     ):
@@ -214,6 +217,10 @@ class Transformer(Module):
         # rotary embedding
 
         self.rotary_emb = RotaryEmbedding(dim_head)
+
+        # gateloops
+
+        self.gateloops = ModuleList([SimpleGateLoopLayer(dim = dim) for _ in range(num_gateloop_layers)])
 
         # time conditioning
         # will use adaptive rmsnorm
@@ -258,6 +265,11 @@ class Transformer(Module):
         batch, seq_len, device = *x.shape[:2], x.device
 
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
+
+        # gateloop layers
+
+        for gateloop in self.gateloops:
+            x = gateloop(x) + x
 
         # handle absolute positions if needed
 
