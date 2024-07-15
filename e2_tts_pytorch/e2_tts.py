@@ -198,6 +198,7 @@ class Transformer(Module):
         heads = 8,
         dim_head = 64,
         num_gateloop_layers = 1,
+        dropout = 0.1,
         attn_kwargs: dict = dict(),
         ff_kwargs: dict = dict()
     ):
@@ -241,10 +242,10 @@ class Transformer(Module):
 
         for _ in range(depth):
             attn_norm = rmsnorm_klass(dim)
-            attn = Attention(dim = dim, heads = heads, dim_head = dim_head, **attn_kwargs)
+            attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
 
             ff_norm = rmsnorm_klass(dim)
-            ff = FeedForward(dim = dim, glu = True, **ff_kwargs)
+            ff = FeedForward(dim = dim, glu = True, dropout = dropout, **ff_kwargs)
 
             skip_proj = nn.Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
 
