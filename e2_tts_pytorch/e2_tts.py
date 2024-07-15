@@ -152,6 +152,7 @@ class CharacterEmbed(Module):
         cond_drop_prob = 0.
     ):
         super().__init__()
+        self.dim = dim
         self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
         self.combine = nn.Linear(dim * 2, dim)
         self.cond_drop_prob = cond_drop_prob
@@ -178,6 +179,7 @@ class CharacterEmbed(Module):
         text_embed = self.embed(text)
 
         concatted = torch.cat((x, text_embed), dim = -1)
+        assert x.shape[-1] == text_embed.shape[-1] == self.dim, f'expected {self.dim} but received ({x.shape[-1]}, {text_embed.shape[-1]})'
         return self.combine(concatted)
 
 # attention and transformer backbone

@@ -11,7 +11,7 @@ from e2_tts_pytorch.trainer import (
 
 duration_predictor = DurationPredictor(
     transformer = dict(
-        dim = 512,
+        dim = 80,
         depth = 2,
     )
 )
