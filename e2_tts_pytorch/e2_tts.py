@@ -199,7 +199,9 @@ class Transformer(Module):
         dim_head = 64,
         num_gateloop_layers = 1,
         dropout = 0.1,
-        attn_kwargs: dict = dict(),
+        attn_kwargs: dict = dict(
+            gate_value_heads = True
+        ),
         ff_kwargs: dict = dict()
     ):
         super().__init__()
