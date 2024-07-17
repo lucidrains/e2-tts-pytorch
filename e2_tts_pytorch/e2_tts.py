@@ -97,6 +97,54 @@ def maybe_masked_mean(
 
 # to mel spec
 
+class BigVGAN_MelSpec(Module):
+    def __init__(
+        self,
+        filter_length = 1024,
+        hop_length = 256,
+        win_length = 1024,
+        n_mel_channels = 128,
+        mel_fmin = 0,
+        mel_fmax = None,
+        sampling_rate = 44100,
+        normalize = False,  # Do not used
+        power = 2,          # Do not used
+        norm = "slaney"     # Do not used
+    ):
+        """
+        the default value is used by bigvgan_v2_44khz_128band_256x
+        """
+        super().__init__()
+        self.n_mel_channels = n_mel_channels
+
+        self.n_fft = filter_length
+        self.hop_length = hop_length
+        self.win_length = win_length
+
+        self.window = torch.hann_window(self.win_length)
+        self.mel_scale = torchaudio.transforms.MelScale(n_mels = self.n_mel_channels, sample_rate = sampling_rate, f_min = mel_fmin, f_max = mel_fmax, n_stft=self.n_fft // 2 + 1, norm="slaney", mel_scale="slaney")
+
+        self.register_buffer('dummy', torch.tensor(0), persistent = False)
+
+    def forward(self, inp):
+        if len(inp.shape) == 3:
+            inp = rearrange(inp, 'b 1 nw -> b nw')
+
+        assert len(inp.shape) == 2
+
+        if self.dummy.device != inp.device:
+            self.to(inp.device)
+
+        inp = torch.nn.functional.pad(inp, (int((self.n_fft-self.hop_length)/2), int((self.n_fft-self.hop_length)/2)), mode='reflect')
+        spec = torch.stft(inp, self.n_fft, hop_length = self.hop_length, win_length = self.win_length, window=self.window, center=False, pad_mode='reflect', normalized=False, onesided=True, return_complex=True)
+        spec = torch.view_as_real(spec)
+        spec = torch.sqrt(spec.pow(2).sum(-1)+(1e-9))
+        mel = self.mel_scale(spec)
+        mel = torch.log(torch.clamp(mel, min=1e-5))
+
+        return mel
+
+
 class MelSpec(Module):
     def __init__(
         self,
@@ -344,6 +392,7 @@ class DurationPredictor(Module):
         self,
         transformer: dict | Transformer,
         text_num_embeds = 256,
+        mel_spec_type: None | str = None,
         mel_spec_kwargs: dict = dict()
     ):
         super().__init__()
@@ -368,7 +417,10 @@ class DurationPredictor(Module):
 
         # mel spec
 
-        self.mel_spec = MelSpec(**mel_spec_kwargs)
+        if mel_spec_type is None:
+            self.mel_spec = MelSpec(**mel_spec_kwargs)
+        elif mel_spec_typ == 'BigVGAN':
+            self.mel_spec = BigVGAN_MelSpec(**mel_spec_kwargs)
 
     def forward(
         self,
@@ -442,6 +494,7 @@ class E2TTS(Module):
         ),
         text_num_embeds = 256,
         cond_drop_prob = 0.25,
+        mel_spec_type: None | str = None,
         mel_spec_kwargs: dict = dict(),
         immiscible = False
     ):
@@ -476,7 +529,10 @@ class E2TTS(Module):
 
         # mel spec
 
-        self.mel_spec = MelSpec(**mel_spec_kwargs)
+        if mel_spec_type is None:
+            self.mel_spec = MelSpec(**mel_spec_kwargs)
+        elif mel_spec_type == "BigVGAN":
+            self.mel_spec = BigVGAN_MelSpec(**mel_spec_kwargs)
 
         # immiscible (diffusion / flow)
 
