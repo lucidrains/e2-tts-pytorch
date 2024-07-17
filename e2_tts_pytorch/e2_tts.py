@@ -442,6 +442,7 @@ class E2TTS(Module):
         ),
         text_num_embeds = 256,
         cond_drop_prob = 0.25,
+        mel_spec_module: Module | None = None,
         mel_spec_kwargs: dict = dict(),
         immiscible = False
     ):
@@ -476,7 +477,7 @@ class E2TTS(Module):
 
         # mel spec
 
-        self.mel_spec = MelSpec(**mel_spec_kwargs)
+        self.mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
 
         # immiscible (diffusion / flow)
 
