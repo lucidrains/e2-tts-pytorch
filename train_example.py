@@ -25,19 +25,20 @@ e2tts = E2TTS(
     ),
 )
 
-train_dataset = HFDataset(load_dataset("MushanW/GLOBE"))
+train_dataset = HFDataset(load_dataset("MushanW/GLOBE")["train"])
 
-optimizer = Adam(e2tts.parameters(), lr=1e-4)
+optimizer = Adam(e2tts.parameters(), lr=7.5e-5)
 
 trainer = E2Trainer(
     e2tts,
     optimizer,
+    num_warmup_steps=20000,
     checkpoint_path = 'e2tts.pt',
     log_file = 'e2tts.txt'
 )
 
 epochs = 10
-batch_size = 8
+batch_size = 32
 grad_accumulation_steps = 1
 
 trainer.train(train_dataset, epochs, batch_size, grad_accumulation_steps, save_step=1000)

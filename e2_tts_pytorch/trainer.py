@@ -7,6 +7,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
+from torch.optim.lr_scheduler import LinearLR, SequentialLR
 
 import torchaudio
 
@@ -108,6 +109,7 @@ class E2Trainer:
         self,
         model: E2TTS,
         optimizer,
+        num_warmup_steps=20000,
         duration_predictor: DurationPredictor | None = None,
         checkpoint_path = None,
         log_file = "logs.txt",
@@ -127,8 +129,8 @@ class E2Trainer:
         self.model = model
         self.duration_predictor = duration_predictor
         self.optimizer = optimizer
+        self.num_warmup_steps = num_warmup_steps
         self.checkpoint_path = default(checkpoint_path, 'model.pth')
-
         self.mel_spectrogram = MelSpec(sampling_rate=self.target_sample_rate)
         self.model, self.optimizer = self.accelerator.prepare(
             self.model, self.optimizer
@@ -142,6 +144,7 @@ class E2Trainer:
         checkpoint = dict(
             model_state_dict = self.accelerator.unwrap_model(self.model).state_dict(),
             optimizer_state_dict = self.optimizer.state_dict(),
+            scheduler_state_dict = self.scheduler.state_dict(),
             step = step
         )
 
@@ -154,13 +157,22 @@ class E2Trainer:
         checkpoint = torch.load(self.checkpoint_path)
         self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if self.scheduler:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         return checkpoint['step']
 
     def train(self, train_dataset, epochs, batch_size, grad_accumulation_steps=1, num_workers=12, save_step=1000):
         # (todo) gradient accumulation needs to be accounted for
 
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, collate_fn=collate_fn, shuffle=True, num_workers=num_workers, pin_memory=True)
-        train_dataloader = self.accelerator.prepare(train_dataloader)
+        total_steps = len(train_dataloader) * epochs
+        decay_steps = total_steps - self.num_warmup_steps
+        warmup_scheduler = LinearLR(self.optimizer, start_factor=1e-8, end_factor=1.0, total_iters=self.num_warmup_steps)
+        decay_scheduler = LinearLR(self.optimizer, start_factor=1.0, end_factor=1e-8, total_iters=decay_steps)
+        self.scheduler = SequentialLR(self.optimizer, 
+                                      schedulers=[warmup_scheduler, decay_scheduler],
+                                      milestones=[self.num_warmup_steps])
+        train_dataloader, self.scheduler = self.accelerator.prepare(train_dataloader, self.scheduler)
         start_step = self.load_checkpoint()
         global_step = start_step
 
@@ -185,11 +197,13 @@ class E2Trainer:
                     self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
                 
                 self.optimizer.step()
+                self.scheduler.step()
                 self.optimizer.zero_grad()
                 
                 if self.accelerator.is_local_main_process:
                     logger.info(f"Step {global_step+1}: Loss = {loss.item():.4f}")
                     self.writer.add_scalar('E2E Loss', loss.item(), global_step)
+                    self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_step)
                 
                 global_step += 1
                 epoch_loss += loss.item()
