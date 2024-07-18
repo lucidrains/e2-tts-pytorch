@@ -188,7 +188,7 @@ class E2Trainer:
                 
                 if self.duration_predictor is not None:
                     dur_loss = self.duration_predictor(mel_spec, target_duration=batch.get('durations'))
-                    self.writer.add_scalar('Duration Loss', dur_loss.item(), global_step)
+                    self.writer.add_scalar('duration loss', dur_loss.item(), global_step)
                 
                 loss = self.model(mel_spec, text=text_inputs, lens=mel_lengths)
                 self.accelerator.backward(loss)
@@ -201,8 +201,8 @@ class E2Trainer:
                 self.optimizer.zero_grad()
                 
                 if self.accelerator.is_local_main_process:
-                    logger.info(f"Step {global_step+1}: Loss = {loss.item():.4f}")
-                    self.writer.add_scalar('E2E Loss', loss.item(), global_step)
+                    logger.info(f"step {global_step+1}: loss = {loss.item():.4f}")
+                    self.writer.add_scalar('loss', loss.item(), global_step)
                     self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_step)
                 
                 global_step += 1
@@ -214,7 +214,7 @@ class E2Trainer:
             
             epoch_loss /= len(train_dataloader)
             if self.accelerator.is_local_main_process:
-                logger.info(f"Epoch {epoch+1}/{epochs} - Average Loss = {epoch_loss:.4f}")
-                self.writer.add_scalar('Epoch Average Loss', epoch_loss, epoch)
+                logger.info(f"epoch {epoch+1}/{epochs} - average loss = {epoch_loss:.4f}")
+                self.writer.add_scalar('epoch average loss', epoch_loss, epoch)
         
         self.writer.close()
