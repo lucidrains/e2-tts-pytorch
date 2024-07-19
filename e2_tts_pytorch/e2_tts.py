@@ -200,7 +200,8 @@ class Transformer(Module):
         num_gateloop_layers = 1,
         dropout = 0.1,
         attn_kwargs: dict = dict(
-            gate_value_heads = True
+            gate_value_heads = True,
+            softclamp_logits = True,
         ),
         ff_kwargs: dict = dict()
     ):
