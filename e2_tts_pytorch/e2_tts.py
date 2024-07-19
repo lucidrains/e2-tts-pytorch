@@ -513,10 +513,12 @@ class E2TTS(Module):
         cfg_strength: float = 1.,
         **kwargs,
     ):
-        if cfg_strength < 1e-5:
-            return self.transformer_with_pred_head(*args, drop_text_cond = False, **kwargs)
         
         pred = self.transformer_with_pred_head(*args, drop_text_cond = False, **kwargs)
+
+        if cfg_strength < 1e-5:
+            return pred
+
         null_pred = self.transformer_with_pred_head(*args, drop_text_cond = True, **kwargs)
 
         return pred + (pred - null_pred) * cfg_strength
@@ -573,10 +575,6 @@ class E2TTS(Module):
         cond_mask = F.pad(cond_mask, (0, max_duration - cond_seq_len), value = False)
 
         mask = lens_to_mask(duration)
-        
-        # only include the target sequence in the mask
-        
-        mask &= ~cond_mask
 
         # neural ode
 
