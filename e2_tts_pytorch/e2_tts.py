@@ -462,7 +462,6 @@ class E2TTS(Module):
 
         dim = transformer.dim
         self.dim = dim
-        self.to_pred = nn.Linear(dim, dim)
 
         self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, cond_drop_prob = cond_drop_prob)
 
@@ -479,6 +478,10 @@ class E2TTS(Module):
         # mel spec
 
         self.mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
+        num_channels = self.mel_spec.n_mel_channels
+ 
+        self.proj_in = nn.Linear(num_channels, dim)
+        self.to_pred = nn.Linear(dim, num_channels)
 
         # immiscible (diffusion / flow)
 
@@ -496,6 +499,7 @@ class E2TTS(Module):
         text: Int['b nt'] | None = None,
         drop_text_cond: bool | None = None
     ):
+        x = self.proj_in(x)
 
         if exists(text):
             x = self.embed_text(x, text, drop_text_cond = drop_text_cond)
