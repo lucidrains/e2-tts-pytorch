@@ -32,7 +32,7 @@ duration_predictor = DurationPredictor(
     )
 )
 
-mel = torch.randn(2, 1024, 512)
+mel = torch.randn(2, 1024, 80)
 text = ['Hello', 'Goodbye']
 
 loss = duration_predictor(mel, text = text)
