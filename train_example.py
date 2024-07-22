@@ -11,16 +11,16 @@ from e2_tts_pytorch.trainer import (
 
 duration_predictor = DurationPredictor(
     transformer = dict(
-        dim = 80,
-        depth = 2,
+        dim = 512,
+        depth = 6,
     )
 )
 
 e2tts = E2TTS(
     duration_predictor = duration_predictor,
     transformer = dict(
-        dim = 80,
-        depth = 4,
+        dim = 512,
+        depth = 12,
         skip_connect_type = 'concat'
     ),
 )
