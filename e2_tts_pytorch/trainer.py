@@ -133,7 +133,13 @@ class E2Trainer:
         self.model = model
 
         if self.is_main:
-            self.ema_model = EMA(model, **ema_kwargs)
+            self.ema_model = EMA(
+                model,
+                include_online_model = False,
+                **ema_kwargs
+            )
+
+            self.ema_model.to(self.accelerator.device)
 
         self.duration_predictor = duration_predictor
         self.optimizer = optimizer
