@@ -97,34 +97,33 @@ def maybe_masked_mean(
 
 # to mel spec
 
+
 class MelSpec(Module):
     def __init__(
         self,
         filter_length = 1024,
         hop_length = 256,
         win_length = 1024,
-        n_mel_channels = 80,
-        mel_fmin = 0,
-        mel_fmax = 8000,
-        sampling_rate = 22050,
+        n_mel_channels = 100,
+        sampling_rate = 24_000,
         normalize = False,
-        power = 2,
-        norm = "slaney"
+        power = 1,
+        norm = None,
+        center = True,
     ):
         super().__init__()
         self.n_mel_channels = n_mel_channels
 
         self.mel_stft = torchaudio.transforms.MelSpectrogram(
-            n_fft=filter_length,
-            hop_length=hop_length,
-            win_length=win_length,
-            power=power,
-            normalized=normalize,
-            sample_rate=sampling_rate,
-            f_min=mel_fmin,
-            f_max=mel_fmax,
-            n_mels=n_mel_channels,
-            norm=norm,
+            sample_rate = sampling_rate,
+            n_fft = filter_length,
+            win_length = win_length,
+            hop_length = hop_length,
+            n_mels = n_mel_channels,
+            power = power,
+            center = center,
+            normalized = normalize,
+            norm = norm,
         )
 
         self.register_buffer('dummy', torch.tensor(0), persistent = False)
