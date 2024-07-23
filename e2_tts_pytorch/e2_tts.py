@@ -342,6 +342,7 @@ class DurationPredictor(Module):
         self,
         transformer: dict | Transformer,
         text_num_embeds = 256,
+        num_channels = None,
         mel_spec_kwargs: dict = dict()
     ):
         super().__init__()
@@ -355,7 +356,7 @@ class DurationPredictor(Module):
         # mel spec
 
         self.mel_spec = MelSpec(**mel_spec_kwargs)
-        self.num_channels = self.mel_spec.n_mel_channels
+        self.num_channels = default(num_channels, self.mel_spec.n_mel_channels)
 
         self.transformer = transformer
         dim = transformer.dim
@@ -445,6 +446,7 @@ class E2TTS(Module):
         ),
         text_num_embeds = 256,
         cond_drop_prob = 0.25,
+        num_channels = None,
         mel_spec_module: Module | None = None,
         mel_spec_kwargs: dict = dict(),
         immiscible = False
@@ -480,7 +482,7 @@ class E2TTS(Module):
         # mel spec
 
         self.mel_spec = default(mel_spec_module, MelSpec(**mel_spec_kwargs))
-        num_channels = self.mel_spec.n_mel_channels
+        num_channels = default(num_channels, self.mel_spec.n_mel_channels)
  
         self.num_channels = num_channels
 
