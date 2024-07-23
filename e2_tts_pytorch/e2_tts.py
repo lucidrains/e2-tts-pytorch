@@ -168,10 +168,8 @@ class CharacterEmbed(Module):
             return x
 
         max_seq_len = x.shape[1]
-        text_mask = text == -1
 
-        text = text + 1 # use 0 as filler token
-        text = text.masked_fill(text_mask, 0)
+        text = text + 1 # shift all other token ids up by 1 and use 0 as filler token
 
         text = text[:, :max_seq_len] # just curtail if character tokens are more than the mel spec tokens, one of the edge cases the paper did not address
         text = F.pad(text, (0, max_seq_len - text.shape[1]), value = 0)
