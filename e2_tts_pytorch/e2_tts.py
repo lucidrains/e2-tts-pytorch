@@ -81,6 +81,40 @@ def lens_to_mask(
     seq = torch.arange(length, device = t.device)
     return einx.less('n, b -> b n', seq, t)
 
+def mask_from_start_end_indices(
+    seq_len: Int['b'],
+    start: Int['b'],
+    end: Int['b']
+):
+    assert start.shape == end.shape
+    assert seq_len.shape[0] == start.shape[0]
+    device = start.device
+    
+    batch_size = start.shape[0]
+    max_seq_len = seq_len.max().item()
+    
+    seq = torch.arange(max_seq_len, device = device, dtype = torch.long)
+    seq = seq.unsqueeze(0).expand(batch_size, -1)
+    
+    mask = seq >= start[:, None].long()
+    mask &= seq < end[:, None].long()
+    return mask
+
+def mask_from_frac_lengths(
+    seq_len: Int['b'],
+    frac_lengths: Float['b']
+):
+    device = frac_lengths.device
+
+    lengths = (frac_lengths * seq_len).long()
+    max_start = seq_len - lengths
+
+    rand = torch.zeros_like(frac_lengths, device = device).uniform_(0, 1)
+    start = (max_start * rand).long().clamp(min = 0)
+    end = start + lengths
+
+    return mask_from_start_end_indices(seq_len, start, end)
+
 def maybe_masked_mean(
     t: Float['b n d'],
     mask: Bool['b n'] = None
@@ -449,7 +483,8 @@ class E2TTS(Module):
         num_channels = None,
         mel_spec_module: Module | None = None,
         mel_spec_kwargs: dict = dict(),
-        immiscible = False
+        immiscible = False,
+        frac_lengths_mask: Tuple[float, float] = (0.7, 1.)
     ):
         super().__init__()
 
@@ -466,6 +501,8 @@ class E2TTS(Module):
 
         dim = transformer.dim
         self.dim = dim
+
+        self.frac_lengths_mask = frac_lengths_mask
 
         self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, cond_drop_prob = cond_drop_prob)
 
@@ -653,13 +690,8 @@ class E2TTS(Module):
 
         # get a random span to mask out for training conditionally
 
-        random_span_frac_indices = inp.new_zeros(2, batch).uniform_(0, 1)
-        rand_span_indices = (random_span_frac_indices * default(lens, seq_len)).long()
-        rand_span_indices = rand_span_indices.sort(dim = 0).values
-
-        seq = torch.arange(seq_len, device = device)
-        start, end = rand_span_indices[..., None]
-        rand_span_mask = (seq >= start) & (seq <= end)
+        frac_lengths = torch.zeros((batch,), device = self.device).float().uniform_(*self.frac_lengths_mask)
+        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths)
 
         if exists(mask):
             rand_span_mask &= mask
