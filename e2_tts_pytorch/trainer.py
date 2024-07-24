@@ -126,7 +126,7 @@ class E2Trainer:
 
         self.accelerator = Accelerator(
             log_with="all",
-            grad_accumulation_steps=grad_accumulation_steps,
+            gradient_accumulation_steps=grad_accumulation_steps,
             **accelerate_kwargs
         )
 
