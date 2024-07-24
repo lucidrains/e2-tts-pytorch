@@ -237,7 +237,7 @@ class E2Trainer:
                 epoch_loss += loss.item()
                 progress_bar.set_postfix(loss=loss.item())
                 
-                if global_step % save_step == 0:
+                if self.is_main and global_step % save_step == 0:
                     self.save_checkpoint(global_step)
             
             epoch_loss /= len(train_dataloader)
