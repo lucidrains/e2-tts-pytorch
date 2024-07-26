@@ -186,9 +186,13 @@ class CharacterEmbed(Module):
     ):
         super().__init__()
         self.dim = dim
-        self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
-        self.combine = nn.Linear(dim * 2, dim)
         self.cond_drop_prob = cond_drop_prob
+
+        self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
+        self.to_cond_gamma_beta = nn.Linear(dim * 2, dim * 2)
+
+        nn.init.zeros_(self.to_cond_gamma_beta.weight)
+        nn.init.zeros_(self.to_cond_gamma_beta.bias)
 
     def forward(
         self,
@@ -211,7 +215,9 @@ class CharacterEmbed(Module):
 
         concatted = torch.cat((x, text_embed), dim = -1)
         assert x.shape[-1] == text_embed.shape[-1] == self.dim, f'expected {self.dim} but received ({x.shape[-1]}, {text_embed.shape[-1]})'
-        return self.combine(concatted)
+
+        gamma, beta = self.to_cond_gamma_beta(concatted).chunk(2, dim = -1)
+        return x * (gamma + 1.) + beta
 
 # attention and transformer backbone
 # for use in both e2tts as well as duration module
