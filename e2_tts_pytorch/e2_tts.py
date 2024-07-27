@@ -14,7 +14,7 @@ from random import random
 import torch
 from torch import nn, from_numpy
 import torch.nn.functional as F
-from torch.nn import Module, ModuleList
+from torch.nn import Module, ModuleList, Sequential, Linear
 from torch.nn.utils.rnn import pad_sequence
 
 import torchaudio
@@ -175,9 +175,10 @@ class CharacterEmbed(Module):
         self.cond_drop_prob = cond_drop_prob
 
         self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
-        self.gateloops = ModuleList([SimpleGateLoopLayer(dim = dim * 3) for _ in range(num_gateloop_layers)])
 
-        self.to_cond_gamma_beta = nn.Linear(dim * 3, dim * 2)
+        self.gateloops = ModuleList([Sequential(Linear(dim * 3, dim * 3, bias = False), SimpleGateLoopLayer(dim = dim * 3)) for _ in range(num_gateloop_layers)])
+
+        self.to_cond_gamma_beta = Linear(dim * 3, dim * 2)
 
         nn.init.zeros_(self.to_cond_gamma_beta.weight)
         nn.init.zeros_(self.to_cond_gamma_beta.bias)
@@ -268,9 +269,9 @@ class Transformer(Module):
         self.time_cond_mlp = nn.Identity()
 
         if cond_on_time:
-            self.time_cond_mlp = nn.Sequential(
+            self.time_cond_mlp = Sequential(
                 Rearrange('... -> ... 1'),
-                nn.Linear(1, dim),
+                Linear(1, dim),
                 nn.SiLU()
             )
 
@@ -281,7 +282,7 @@ class Transformer(Module):
             ff_norm = rmsnorm_klass(dim)
             ff = FeedForward(dim = dim, glu = True, dropout = dropout, **ff_kwargs)
 
-            skip_proj = nn.Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
+            skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
 
             self.layers.append(ModuleList([
                 skip_proj,
@@ -399,12 +400,12 @@ class DurationPredictor(Module):
         dim = transformer.dim
         self.dim = dim
 
-        self.proj_in = nn.Linear(self.num_channels, self.dim)
+        self.proj_in = Linear(self.num_channels, self.dim)
 
         self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, **char_embed_kwargs)
 
-        self.to_pred = nn.Sequential(
-            nn.Linear(dim, 1, bias = False),
+        self.to_pred = Sequential(
+            Linear(dim, 1, bias = False),
             nn.Softplus(),
             Rearrange('... 1 -> ...')
         )
@@ -528,9 +529,9 @@ class E2TTS(Module):
  
         self.num_channels = num_channels
 
-        self.proj_in = nn.Linear(num_channels, dim)
-        self.cond_proj_in = nn.Linear(num_channels, dim)
-        self.to_pred = nn.Linear(dim, num_channels)
+        self.proj_in = Linear(num_channels, dim)
+        self.cond_proj_in = Linear(num_channels, dim)
+        self.to_pred = Linear(dim, num_channels)
 
     @property
     def device(self):
