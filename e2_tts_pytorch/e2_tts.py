@@ -131,7 +131,6 @@ def maybe_masked_mean(
 
 # to mel spec
 
-
 class MelSpec(Module):
     def __init__(
         self,
@@ -605,16 +604,20 @@ class E2TTS(Module):
 
         batch, cond_seq_len, device = *cond.shape[:2], cond.device
 
+        if not exists(lens):
+            lens = torch.full((batch,), cond_seq_len, device = device, dtype = torch.long)
+
         # text
 
         if isinstance(text, list):
             text = list_str_to_tensor(text).to(device)
             assert text.shape[0] == batch
 
-        # duration
+        if exists(text):
+            text_lens = (text != -1).sum(dim = -1)
+            lens = torch.maximum(text_lens, lens) # make sure lengths are at least those of the text characters
 
-        if not exists(lens):
-            lens = torch.full((batch,), cond_seq_len, device = device, dtype = torch.long)
+        # duration
 
         cond_mask = lens_to_mask(lens)
 
@@ -630,7 +633,7 @@ class E2TTS(Module):
         max_duration = duration.amax()
 
         cond = F.pad(cond, (0, 0, 0, max_duration - cond_seq_len), value = 0.)
-        cond_mask = F.pad(cond_mask, (0, max_duration - cond_seq_len), value = False)
+        cond_mask = F.pad(cond_mask, (0, max_duration - cond_mask.shape[-1]), value = False)
         cond_mask = rearrange(cond_mask, '... -> ... 1')
 
         mask = lens_to_mask(duration)
