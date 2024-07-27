@@ -84,30 +84,18 @@ def mask_from_start_end_indices(
     start: Int['b'],
     end: Int['b']
 ):
-    assert start.shape == end.shape
-    assert seq_len.shape[0] == start.shape[0]
-    device = start.device
-    
-    batch_size = start.shape[0]
-    max_seq_len = seq_len.max().item()
-    
-    seq = torch.arange(max_seq_len, device = device, dtype = torch.long)
-    seq = seq.unsqueeze(0).expand(batch_size, -1)
-    
-    mask = seq >= start[:, None].long()
-    mask &= seq < end[:, None].long()
-    return mask
+    max_seq_len = seq_len.max().item()  
+    seq = torch.arange(max_seq_len, device = start.device).long()
+    return einx.greater_equal('n, b -> b n', seq, start) & einx.less('n, b -> b n', seq, end)
 
 def mask_from_frac_lengths(
     seq_len: Int['b'],
     frac_lengths: Float['b']
 ):
-    device = frac_lengths.device
-
     lengths = (frac_lengths * seq_len).long()
     max_start = seq_len - lengths
 
-    rand = torch.zeros_like(frac_lengths, device = device).uniform_(0, 1)
+    rand = torch.rand_like(frac_lengths)
     start = (max_start * rand).long().clamp(min = 0)
     end = start + lengths
 
