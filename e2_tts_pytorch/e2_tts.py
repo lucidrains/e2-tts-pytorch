@@ -439,7 +439,7 @@ class DurationPredictor(Module):
                 text = list_str_to_tensor(text).to(device)
                 assert text.shape[0] == batch
 
-            x = self.embed_text(x, text)
+            x = self.embed_text(x, x, text)
 
         # handle lengths (duration)
 
@@ -623,7 +623,7 @@ class E2TTS(Module):
                 duration = torch.full((batch,), duration, device = device, dtype = torch.long)
 
         elif exists(self.duration_predictor):
-            duration = self.duration_predictor(cond, lens = lens).long()
+            duration = self.duration_predictor(cond, text = text, lens = lens).long()
 
         duration = torch.maximum(lens + 1, duration) # just add one token so something is generated
         duration = duration.clamp(max = max_duration)
