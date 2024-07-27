@@ -585,8 +585,8 @@ class E2TTS(Module):
         text: Int['b n'] | List[str] | None = None,
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
-        steps = 3,
-        cfg_strength = 1.,   # they used a classifier free guidance strenght of 1.
+        steps = 32,
+        cfg_strength = 1.,   # they used a classifier free guidance strength of 1.
         max_duration = 4096, # in case the duration predictor goes haywire
         vocoder: Callable[Float['b d n'], Float['b nw']] | None = None
     ):
