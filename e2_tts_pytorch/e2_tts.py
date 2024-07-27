@@ -167,13 +167,16 @@ class CharacterEmbed(Module):
         self,
         dim,
         num_embeds = 256,
-        cond_drop_prob = 0.
+        cond_drop_prob = 0.,
+        num_gateloop_layers = 0
     ):
         super().__init__()
         self.dim = dim
         self.cond_drop_prob = cond_drop_prob
 
         self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
+        self.gateloops = ModuleList([SimpleGateLoopLayer(dim = dim * 3) for _ in range(num_gateloop_layers)])
+
         self.to_cond_gamma_beta = nn.Linear(dim * 3, dim * 2)
 
         nn.init.zeros_(self.to_cond_gamma_beta.weight)
@@ -197,9 +200,14 @@ class CharacterEmbed(Module):
 
         text = text[:, :max_seq_len] # just curtail if character tokens are more than the mel spec tokens, one of the edge cases the paper did not address
         text = F.pad(text, (0, max_seq_len - text.shape[1]), value = 0)
+
         text_embed = self.embed(text)
 
         concatted = torch.cat((x, cond, text_embed), dim = -1)
+
+        for gateloop in self.gateloops:
+            concatted = gateloop(concatted) + concatted
+
         assert x.shape[-1] == text_embed.shape[-1] == self.dim, f'expected {self.dim} but received ({x.shape[-1]}, {text_embed.shape[-1]})'
 
         gamma, beta = self.to_cond_gamma_beta(concatted).chunk(2, dim = -1)
@@ -369,7 +377,10 @@ class DurationPredictor(Module):
         transformer: dict | Transformer,
         text_num_embeds = 256,
         num_channels = None,
-        mel_spec_kwargs: dict = dict()
+        mel_spec_kwargs: dict = dict(),
+        char_embed_kwargs: dict = dict(
+            num_gateloop_layers = 2
+        )
     ):
         super().__init__()
 
@@ -390,7 +401,7 @@ class DurationPredictor(Module):
 
         self.proj_in = nn.Linear(self.num_channels, self.dim)
 
-        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds)
+        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, **char_embed_kwargs)
 
         self.to_pred = nn.Sequential(
             nn.Linear(dim, 1, bias = False),
@@ -474,6 +485,9 @@ class E2TTS(Module):
         cond_drop_prob = 0.25,
         num_channels = None,
         mel_spec_module: Module | None = None,
+        char_embed_kwargs: dict = dict(
+            num_gateloop_layers = 2
+        ),
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: Tuple[float, float] = (0.7, 1.)
     ):
@@ -495,7 +509,7 @@ class E2TTS(Module):
 
         self.frac_lengths_mask = frac_lengths_mask
 
-        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, cond_drop_prob = cond_drop_prob)
+        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, cond_drop_prob = cond_drop_prob, **char_embed_kwargs)
 
         self.duration_predictor = duration_predictor
 
