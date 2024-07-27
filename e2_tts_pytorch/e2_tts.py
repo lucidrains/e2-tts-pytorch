@@ -189,7 +189,7 @@ class CharacterEmbed(Module):
         self.cond_drop_prob = cond_drop_prob
 
         self.embed = nn.Embedding(num_embeds + 1, dim) # will just use 0 as the 'filler token'
-        self.to_cond_gamma_beta = nn.Linear(dim * 2, dim * 2)
+        self.to_cond_gamma_beta = nn.Linear(dim * 3, dim * 2)
 
         nn.init.zeros_(self.to_cond_gamma_beta.weight)
         nn.init.zeros_(self.to_cond_gamma_beta.bias)
@@ -197,6 +197,7 @@ class CharacterEmbed(Module):
     def forward(
         self,
         x: Float['b n d'],
+        cond: Float['b n d'],
         text: Int['b n'],
         drop_text_cond = None
     ):
@@ -213,7 +214,7 @@ class CharacterEmbed(Module):
         text = F.pad(text, (0, max_seq_len - text.shape[1]), value = 0)
         text_embed = self.embed(text)
 
-        concatted = torch.cat((x, text_embed), dim = -1)
+        concatted = torch.cat((x, cond, text_embed), dim = -1)
         assert x.shape[-1] == text_embed.shape[-1] == self.dim, f'expected {self.dim} but received ({x.shape[-1]}, {text_embed.shape[-1]})'
 
         gamma, beta = self.to_cond_gamma_beta(concatted).chunk(2, dim = -1)
@@ -530,6 +531,7 @@ class E2TTS(Module):
         self.num_channels = num_channels
 
         self.proj_in = nn.Linear(num_channels, dim)
+        self.cond_proj_in = nn.Linear(num_channels, dim)
         self.to_pred = nn.Linear(dim, num_channels)
 
         # immiscible (diffusion / flow)
@@ -543,15 +545,17 @@ class E2TTS(Module):
     def transformer_with_pred_head(
         self,
         x: Float['b n d'],
+        cond: Float['b n d'],
         times: Float['b'],
         mask: Bool['b n'] | None = None,
         text: Int['b nt'] | None = None,
         drop_text_cond: bool | None = None
     ):
         x = self.proj_in(x)
+        cond = self.cond_proj_in(cond)
 
         if exists(text):
-            x = self.embed_text(x, text, drop_text_cond = drop_text_cond)
+            x = self.embed_text(x, cond, text, drop_text_cond = drop_text_cond)
 
         attended = self.transformer(
             x,
@@ -636,12 +640,13 @@ class E2TTS(Module):
         def fn(t, x):
             # at each step, conditioning is fixed
 
-            x = torch.where(cond_mask, cond, x)
+            step_cond = torch.where(cond_mask, cond, torch.zeros_like(cond))
 
             # predict flow
 
             return self.cfg_transformer_with_pred_head(
                 x,
+                step_cond,
                 times = t,
                 text = text,
                 mask = mask,
@@ -734,14 +739,14 @@ class E2TTS(Module):
 
         # only predict what is within the random mask span for infilling
 
-        w = torch.where(
+        cond = torch.where(
             rand_span_mask[..., None],
-            w, x1
+            torch.zeros_like(x1), x1
         )
 
         # transformer and prediction head
 
-        pred = self.transformer_with_pred_head(w, times = times, text = text)
+        pred = self.transformer_with_pred_head(w, cond, times = times, text = text)
 
         # flow matching loss
 
