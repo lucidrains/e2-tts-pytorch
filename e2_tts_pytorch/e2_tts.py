@@ -745,4 +745,4 @@ class E2TTS(Module):
 
         loss = loss[rand_span_mask]
 
-        return loss.mean()
+        return loss.mean(), cond, pred
