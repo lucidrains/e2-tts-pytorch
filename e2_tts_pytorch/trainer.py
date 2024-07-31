@@ -15,7 +15,9 @@ from torch.optim.lr_scheduler import LinearLR, SequentialLR
 import torchaudio
 
 from einops import rearrange
+
 from accelerate import Accelerator
+from accelerate.utils import DistributedDataParallelKwargs
 
 from ema_pytorch import EMA
 
@@ -140,9 +142,12 @@ class E2Trainer:
     ):
         logger.add(log_file)
 
+        ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters = True)
+
         self.accelerator = Accelerator(
-            log_with="all",
-            gradient_accumulation_steps=grad_accumulation_steps,
+            log_with = "all",
+            kwargs_handlers = [ddp_kwargs],
+            gradient_accumulation_steps = grad_accumulation_steps,
             **accelerate_kwargs
         )
 

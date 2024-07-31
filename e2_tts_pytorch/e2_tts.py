@@ -275,14 +275,16 @@ class Transformer(Module):
                 nn.SiLU()
             )
 
-        for _ in range(depth):
+        for ind in range(depth):
+            is_later_half = ind >= (depth // 2)
+
             attn_norm = rmsnorm_klass(dim)
             attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
 
             ff_norm = rmsnorm_klass(dim)
             ff = FeedForward(dim = dim, glu = True, dropout = dropout, **ff_kwargs)
 
-            skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj else None
+            skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj and is_later_half else None
 
             self.layers.append(ModuleList([
                 skip_proj,
