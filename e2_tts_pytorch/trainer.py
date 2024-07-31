@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 from tqdm import tqdm
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pylab as plt
 
 import torch
 import torch.nn.functional as F
@@ -29,6 +32,19 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+# plot spectrogram 
+def plot_spectrogram(spectrogram):
+    fig, ax = plt.subplots(figsize=(10, 4))
+    im = ax.imshow(spectrogram.T, aspect="auto", origin="lower", interpolation="none")
+    plt.colorbar(im, ax=ax)
+    plt.xlabel("Frames")
+    plt.ylabel("Channels")
+    plt.tight_layout()
+
+    fig.canvas.draw()
+    plt.close()
+    return fig
 
 # collation
 
@@ -217,7 +233,7 @@ class E2Trainer:
                         dur_loss = self.duration_predictor(mel_spec, lens=batch.get('durations'))
                         self.writer.add_scalar('duration loss', dur_loss.item(), global_step)
 
-                    loss = self.model(mel_spec, text=text_inputs, lens=mel_lengths)
+                    loss, cond, pred = self.model(mel_spec, text=text_inputs, lens=mel_lengths)
                     self.accelerator.backward(loss)
 
                     if self.max_grad_norm > 0:
@@ -241,6 +257,9 @@ class E2Trainer:
                 
                 if global_step % save_step == 0:
                     self.save_checkpoint(global_step)
+                    self.writer.add_figure("mel/target", plot_spectrogram(mel_spec[0,:,:].detach().cpu().numpy()), global_step)
+                    self.writer.add_figure("mel/mask", plot_spectrogram(cond[0,:,:].detach().cpu().numpy()), global_step)
+                    self.writer.add_figure("mel/prediction", plot_spectrogram(pred[0,:,:].detach().cpu().numpy()), global_step)
             
             epoch_loss /= len(train_dataloader)
             if self.accelerator.is_local_main_process:
