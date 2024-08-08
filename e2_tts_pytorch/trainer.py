@@ -241,7 +241,7 @@ class E2Trainer:
                     loss, cond, pred = self.model(mel_spec, text=text_inputs, lens=mel_lengths)
                     self.accelerator.backward(loss)
 
-                    if self.max_grad_norm > 0:
+                    if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
                         self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
 
                     self.optimizer.step()
