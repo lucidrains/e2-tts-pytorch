@@ -33,12 +33,12 @@ trainer = E2Trainer(
     e2tts,
     optimizer,
     num_warmup_steps=20000,
+    grad_accumulation_steps = 1,
     checkpoint_path = 'e2tts.pt',
     log_file = 'e2tts.txt'
 )
 
 epochs = 10
 batch_size = 32
-grad_accumulation_steps = 1
 
-trainer.train(train_dataset, epochs, batch_size, grad_accumulation_steps, save_step=1000)
+trainer.train(train_dataset, epochs, batch_size, save_step=1000)
