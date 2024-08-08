@@ -9,6 +9,7 @@ d - dimension
 
 from __future__ import annotations
 from typing import Literal, List, Callable
+from collections import namedtuple
 from random import random
 
 import torch
@@ -21,8 +22,8 @@ import torchaudio
 from torchdiffeq import odeint
 
 import einx
-from einops import einsum, rearrange, repeat, reduce
 from einops.layers.torch import Rearrange
+from einops import einsum, rearrange, repeat, reduce, pack, unpack
 
 from x_transformers import (
     Attention,
@@ -40,6 +41,10 @@ from e2_tts_pytorch.tensor_typing import (
     Int,
     Bool
 )
+
+# constants
+
+E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred'])
 
 # helpers
 
@@ -231,6 +236,7 @@ class Transformer(Module):
         dim_head = 64,
         num_gateloop_layers = 1,
         dropout = 0.1,
+        num_registers = 32,
         attn_kwargs: dict = dict(
             gate_value_heads = True,
             softclamp_logits = True,
@@ -251,6 +257,12 @@ class Transformer(Module):
 
         self.depth = depth
         self.layers = ModuleList([])
+
+        # registers
+
+        self.num_registers = num_registers
+        self.registers = nn.Parameter(torch.zeros(num_registers, dim))
+        nn.init.normal_(self.registers, std = 0.02)
 
         # rotary embedding
 
@@ -329,9 +341,17 @@ class Transformer(Module):
             times = self.time_cond_mlp(times)
             norm_kwargs.update(condition = times)
 
+        # register tokens
+
+        registers = repeat(self.registers, 'r d -> b r d', b = batch)
+        x, registers_packed_shape = pack((registers, x), 'b * d')
+
+        if exists(mask):
+            mask = F.pad(mask, (self.num_registers, 0), value = True)
+
         # rotary embedding
 
-        rotary_pos_emb = self.rotary_emb.forward_from_seq_len(seq_len)
+        rotary_pos_emb = self.rotary_emb.forward_from_seq_len(x.shape[-2])
 
         # skip connection related stuff
 
@@ -369,6 +389,8 @@ class Transformer(Module):
             x = ff(ff_norm(x, **norm_kwargs)) + x
 
         assert len(skips) == 0
+
+        _, x = unpack(x, registers_packed_shape, 'b * d')
 
         return self.final_norm(x, **norm_kwargs)
 
@@ -745,6 +767,6 @@ class E2TTS(Module):
 
         loss = F.mse_loss(pred, flow, reduction = 'none')
 
-        loss = loss[rand_span_mask]
+        loss = loss[rand_span_mask].mean()
 
-        return loss.mean(), cond, pred
+        return E2TTSReturn(loss, cond, pred)

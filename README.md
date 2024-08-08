@@ -47,8 +47,8 @@ e2tts = E2TTS(
     ),
 )
 
-loss = e2tts(mel, text = text)
-loss.backward()
+out = e2tts(mel, text = text)
+out.loss.backward()
 
 sampled = e2tts.sample(mel[:, :5], text = text)
 
@@ -62,5 +62,14 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     author  = {Sefik Emre Eskimez and Xiaofei Wang and Manthan Thakker and Canrun Li and Chung-Hsien Tsai and Zhen Xiao and Hemin Yang and Zirun Zhu and Min Tang and Xu Tan and Yanqing Liu and Sheng Zhao and Naoyuki Kanda},
     year    = {2024},
     url     = {https://api.semanticscholar.org/CorpusID:270738197}
+}
+```
+
+```bibtex
+@inproceedings{Darcet2023VisionTN,
+    title   = {Vision Transformers Need Registers},
+    author  = {Timoth'ee Darcet and Maxime Oquab and Julien Mairal and Piotr Bojanowski},
+    year    = {2023},
+    url     = {https://api.semanticscholar.org/CorpusID:263134283}
 }
 ```
