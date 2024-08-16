@@ -25,6 +25,8 @@ import einx
 from einops.layers.torch import Rearrange
 from einops import einsum, rearrange, repeat, reduce, pack, unpack
 
+from scipy.optimize import linear_sum_assignment
+
 from x_transformers import (
     Attention,
     FeedForward,
@@ -514,7 +516,8 @@ class E2TTS(Module):
             num_gateloop_layers = 2
         ),
         mel_spec_kwargs: dict = dict(),
-        frac_lengths_mask: Tuple[float, float] = (0.7, 1.)
+        frac_lengths_mask: Tuple[float, float] = (0.7, 1.),
+        immiscible = False
     ):
         super().__init__()
 
@@ -556,6 +559,10 @@ class E2TTS(Module):
         self.proj_in = Linear(num_channels, dim)
         self.cond_proj_in = Linear(num_channels, dim)
         self.to_pred = Linear(dim, num_channels)
+
+        # immiscible flow - https://arxiv.org/abs/2406.12303
+
+        self.immiscible = immiscible
 
     @property
     def device(self):
@@ -740,6 +747,13 @@ class E2TTS(Module):
         # x0 is gaussian noise
 
         x0 = torch.randn_like(x1)
+
+        # maybe immiscible flow
+
+        if self.immiscible:
+            cost = torch.cdist(x1.flatten(1), x0.flatten(1))
+            _, reorder_indices = linear_sum_assignment(cost.cpu())
+            x0 = x0[from_numpy(reorder_indices).to(cost.device)]
 
         # t is random times from above
 
