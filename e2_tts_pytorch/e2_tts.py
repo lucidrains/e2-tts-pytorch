@@ -289,6 +289,8 @@ class Transformer(Module):
                 nn.SiLU()
             )
 
+            self.to_time_token = nn.Linear(dim, dim, bias = False)
+
         for ind in range(depth):
             is_later_half = ind >= (depth // 2)
 
@@ -343,6 +345,14 @@ class Transformer(Module):
             times = self.time_cond_mlp(times)
             norm_kwargs.update(condition = times)
 
+            # u-vit paper claims using a time token helps better condition https://arxiv.org/abs/2209.12152
+
+            time_token = self.to_time_token(times)
+            x, time_packed_shape = pack((time_token, x), 'b * d')
+
+            if exists(mask):
+                mask = F.pad(mask, (1, 0), value = True)
+
         # register tokens
 
         registers = repeat(self.registers, 'r d -> b r d', b = batch)
@@ -393,6 +403,9 @@ class Transformer(Module):
         assert len(skips) == 0
 
         _, x = unpack(x, registers_packed_shape, 'b * d')
+
+        if exists(times):
+            _, x = unpack(x, time_packed_shape, 'b * d')
 
         return self.final_norm(x, **norm_kwargs)
 

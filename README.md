@@ -73,3 +73,14 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:263134283}
 }
 ```
+
+```bibtex
+@article{Bao2022AllAW,
+    title   = {All are Worth Words: A ViT Backbone for Diffusion Models},
+    author  = {Fan Bao and Shen Nie and Kaiwen Xue and Yue Cao and Chongxuan Li and Hang Su and Jun Zhu},
+    journal = {2023 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    year    = {2022},
+    pages   = {22669-22679},
+    url     = {https://api.semanticscholar.org/CorpusID:253581703}
+}
+```
