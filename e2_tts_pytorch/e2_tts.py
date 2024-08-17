@@ -194,9 +194,9 @@ class CharacterEmbed(Module):
         self,
         x: Float['b n d'],
         cond: Float['b n d'],
-        text: Int['b n'],
+        text: Int['b nt'],
         drop_text_cond = None
-    ):
+    ) -> Float['b n d']:
         drop_text_cond = default(drop_text_cond, self.training and random() < self.cond_drop_prob)
 
         if drop_text_cond:
@@ -453,7 +453,7 @@ class DurationPredictor(Module):
         self,
         x: Float['b n d'] | Float['b nw'],
         *,
-        text: Int['b n'] | List[str] | None = None,
+        text: Int['b nt'] | List[str] | None = None,
         lens: Int['b'] | None = None,
         return_loss = True
     ):
@@ -625,7 +625,7 @@ class E2TTS(Module):
         self,
         cond: Float['b n d'] | Float['b nw'],
         *,
-        text: Int['b n'] | List[str] | None = None,
+        text: Int['b nt'] | List[str] | None = None,
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
         steps = 32,
