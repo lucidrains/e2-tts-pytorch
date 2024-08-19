@@ -13,7 +13,7 @@ from collections import namedtuple
 from random import random
 
 import torch
-from torch import nn, from_numpy
+from torch import nn, tensor, from_numpy
 import torch.nn.functional as F
 from torch.nn import Module, ModuleList, Sequential, Linear
 from torch.nn.utils.rnn import pad_sequence
@@ -66,9 +66,28 @@ def list_str_to_tensor(
     padding_value = -1
 ) -> Int['b nt']:
 
-    list_tensors = [torch.tensor([*bytes(t, 'UTF-8')]) for t in text]
-    text = pad_sequence(list_tensors, padding_value = -1, batch_first = True)
-    return text
+    list_tensors = [tensor([*bytes(t, 'UTF-8')]) for t in text]
+    padded_tensor = pad_sequence(list_tensors, padding_value = -1, batch_first = True)
+    return padded_tensor
+
+# simple english phoneme-based tokenizer
+
+from g2p_en import G2p
+
+def get_g2p_en_encode():
+    g2p = G2p()
+
+    def encode(
+        text: List[str],
+        padding_value = -1
+    ) -> Int['b nt']:
+
+        phonemes = [g2p(t) for t in text]
+        list_tensors = [tensor([g2p.p2idx[p] for p in one_phoneme]) for one_phoneme in phonemes]
+        padded_tensor = pad_sequence(list_tensors, padding_value = -1, batch_first = True)
+        return padded_tensor
+
+    return encode
 
 # tensor helpers
 
@@ -152,7 +171,7 @@ class MelSpec(Module):
             norm = norm,
         )
 
-        self.register_buffer('dummy', torch.tensor(0), persistent = False)
+        self.register_buffer('dummy', tensor(0), persistent = False)
 
     def forward(self, inp):
         if len(inp.shape) == 3:
@@ -530,7 +549,8 @@ class E2TTS(Module):
         ),
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: Tuple[float, float] = (0.7, 1.),
-        immiscible = False
+        immiscible = False,
+        tokenizer: str |  Callable[[List[str]], Int['b nt']] = 'char_utf8'
     ):
         super().__init__()
 
@@ -572,6 +592,17 @@ class E2TTS(Module):
         self.proj_in = Linear(num_channels, dim)
         self.cond_proj_in = Linear(num_channels, dim)
         self.to_pred = Linear(dim, num_channels)
+
+        # tokenizer
+
+        if callable(tokenizer):
+            self.tokenizer = tokenizer
+        elif tokenizer == 'char_utf8':
+            self.tokenizer = list_str_to_tensor
+        elif tokenizer == 'phoneme_en':
+            self.tokenizer = get_g2p_en_encode()
+        else:
+            raise ValueError(f'unknown tokenizer string {tokenizer}')
 
         # immiscible flow - https://arxiv.org/abs/2406.12303
 
@@ -650,7 +681,7 @@ class E2TTS(Module):
         # text
 
         if isinstance(text, list):
-            text = list_str_to_tensor(text).to(device)
+            text = self.tokenizer(text).to(device)
             assert text.shape[0] == batch
 
         if exists(text):
@@ -732,7 +763,7 @@ class E2TTS(Module):
         # handle text as string
 
         if isinstance(text, list):
-            text = list_str_to_tensor(text).to(device)
+            text = self.tokenizer(text).to(device)
             assert text.shape[0] == batch
 
         # lens and mask
