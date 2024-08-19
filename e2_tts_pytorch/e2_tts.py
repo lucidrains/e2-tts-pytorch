@@ -434,12 +434,13 @@ class DurationPredictor(Module):
     def __init__(
         self,
         transformer: dict | Transformer,
-        text_num_embeds = 256,
         num_channels = None,
         mel_spec_kwargs: dict = dict(),
         char_embed_kwargs: dict = dict(
             num_gateloop_layers = 2
-        )
+        ),
+        text_num_embeds = None,
+        tokenizer: str |  Callable[[List[str]], Int['b nt']] = 'char_utf8'
     ):
         super().__init__()
 
@@ -460,7 +461,23 @@ class DurationPredictor(Module):
 
         self.proj_in = Linear(self.num_channels, self.dim)
 
+        # tokenizer and text embed
+
+        if callable(tokenizer):
+            assert exists(text_num_embeds), '`text_num_embeds` must be given if supplying your own tokenizer encode function'
+            self.tokenizer = tokenizer
+        elif tokenizer == 'char_utf8':
+            text_num_embeds = 256
+            self.tokenizer = list_str_to_tensor
+        elif tokenizer == 'phoneme_en':
+            text_num_embeds = 74
+            self.tokenizer = get_g2p_en_encode()
+        else:
+            raise ValueError(f'unknown tokenizer string {tokenizer}')
+
         self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, **char_embed_kwargs)
+
+        # to prediction
 
         self.to_pred = Sequential(
             Linear(dim, 1, bias = False),
@@ -540,7 +557,6 @@ class E2TTS(Module):
             rtol = 1e-5,
             method = 'midpoint'
         ),
-        text_num_embeds = 256,
         cond_drop_prob = 0.25,
         num_channels = None,
         mel_spec_module: Module | None = None,
@@ -550,6 +566,7 @@ class E2TTS(Module):
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: Tuple[float, float] = (0.7, 1.),
         immiscible = False,
+        text_num_embeds = None,
         tokenizer: str |  Callable[[List[str]], Int['b nt']] = 'char_utf8'
     ):
         super().__init__()
@@ -569,8 +586,6 @@ class E2TTS(Module):
         self.dim = dim
 
         self.frac_lengths_mask = frac_lengths_mask
-
-        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, cond_drop_prob = cond_drop_prob, **char_embed_kwargs)
 
         self.duration_predictor = duration_predictor
 
@@ -593,16 +608,21 @@ class E2TTS(Module):
         self.cond_proj_in = Linear(num_channels, dim)
         self.to_pred = Linear(dim, num_channels)
 
-        # tokenizer
+        # tokenizer and text embed
 
         if callable(tokenizer):
+            assert exists(text_num_embeds), '`text_num_embeds` must be given if supplying your own tokenizer encode function'
             self.tokenizer = tokenizer
         elif tokenizer == 'char_utf8':
+            text_num_embeds = 256
             self.tokenizer = list_str_to_tensor
         elif tokenizer == 'phoneme_en':
+            text_num_embeds = 74
             self.tokenizer = get_g2p_en_encode()
         else:
             raise ValueError(f'unknown tokenizer string {tokenizer}')
+
+        self.embed_text = CharacterEmbed(dim, num_embeds = text_num_embeds, cond_drop_prob = cond_drop_prob, **char_embed_kwargs)
 
         # immiscible flow - https://arxiv.org/abs/2406.12303
 
