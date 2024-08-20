@@ -8,9 +8,10 @@ d - dimension
 """
 
 from __future__ import annotations
-from typing import Literal, List, Callable
-from collections import namedtuple
 from random import random
+from functools import partial
+from collections import namedtuple
+from typing import Literal, List, Callable
 
 import torch
 from torch import nn, tensor, from_numpy
@@ -31,7 +32,7 @@ from x_transformers import (
     Attention,
     FeedForward,
     RMSNorm,
-    AdaptiveRMSNorm
+    AdaptiveRMSNorm,
 )
 
 from x_transformers.x_transformers import RotaryEmbedding
@@ -58,6 +59,10 @@ def default(v, d):
 
 def divisible_by(num, den):
     return (num % den) == 0
+
+class Identity(Module):
+    def forward(self, x, **kwargs):
+        return x
 
 # simple utf-8 tokenizer, since paper went character based
 
@@ -129,7 +134,7 @@ def mask_from_frac_lengths(
 
 def maybe_masked_mean(
     t: Float['b n d'],
-    mask: Bool['b n'] = None
+    mask: Bool['b n'] | None = None
 ) -> Float['b d']:
 
     if not exists(mask):
@@ -185,6 +190,29 @@ class MelSpec(Module):
         mel = self.mel_stft(inp)
         mel = log(mel)
         return mel
+
+# adaln zero from DiT paper
+
+class AdaLNZero(Module):
+    def __init__(
+        self,
+        dim,
+        dim_condition = None,
+        init_bias_value = -2.
+    ):
+        super().__init__()
+        dim_condition = default(dim_condition, dim)
+        self.to_gamma = nn.Linear(dim_condition, dim)
+
+        nn.init.zeros_(self.to_gamma.weight)
+        nn.init.constant_(self.to_gamma.bias, init_bias_value)
+
+    def forward(self, x, *, condition):
+        if condition.ndim == 2:
+            condition = rearrange(condition, 'b d -> b 1 d')
+
+        gamma = self.to_gamma(condition).sigmoid()
+        return x * gamma
 
 # character embedding
 
@@ -249,7 +277,7 @@ class Transformer(Module):
         *,
         dim,
         depth = 8,
-        cond_on_time = False,
+        cond_on_time = True,
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         abs_pos_emb = True,
         max_seq_len = 8192,
@@ -298,8 +326,9 @@ class Transformer(Module):
 
         self.cond_on_time = cond_on_time
         rmsnorm_klass = RMSNorm if not cond_on_time else AdaptiveRMSNorm
+        postbranch_klass = Identity if not cond_on_time else partial(AdaLNZero, dim = dim)
 
-        self.time_cond_mlp = nn.Identity()
+        self.time_cond_mlp = Identity()
 
         if cond_on_time:
             self.time_cond_mlp = Sequential(
@@ -315,9 +344,11 @@ class Transformer(Module):
 
             attn_norm = rmsnorm_klass(dim)
             attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
+            attn_adaln_zero = postbranch_klass()
 
             ff_norm = rmsnorm_klass(dim)
             ff = FeedForward(dim = dim, glu = True, dropout = dropout, **ff_kwargs)
+            ff_adaln_zero = postbranch_klass()
 
             skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj and is_later_half else None
 
@@ -325,11 +356,13 @@ class Transformer(Module):
                 skip_proj,
                 attn_norm,
                 attn,
+                attn_adaln_zero,
                 ff_norm,
                 ff,
+                ff_adaln_zero
             ]))
 
-        self.final_norm = rmsnorm_klass(dim)
+        self.final_norm = RMSNorm(dim)
 
     def forward(
         self,
@@ -392,7 +425,7 @@ class Transformer(Module):
 
         # go through the layers
 
-        for ind, (maybe_skip_proj, attn_norm, attn, ff_norm, ff) in enumerate(self.layers):
+        for ind, (maybe_skip_proj, attn_norm, attn, maybe_attn_adaln_zero, ff_norm, ff, maybe_ff_adaln_zero) in enumerate(self.layers):
             layer = ind + 1
 
             # skip connection logic
@@ -416,8 +449,13 @@ class Transformer(Module):
 
             # attention and feedforward blocks
 
-            x = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb = rotary_pos_emb, mask = mask) + x
-            x = ff(ff_norm(x, **norm_kwargs)) + x
+            attn_out = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb = rotary_pos_emb, mask = mask)
+
+            x = x + maybe_attn_adaln_zero(attn_out, **norm_kwargs)
+
+            ff_out = ff(ff_norm(x, **norm_kwargs))
+
+            x = x + maybe_ff_adaln_zero(ff_out, **norm_kwargs)
 
         assert len(skips) == 0
 
@@ -426,7 +464,7 @@ class Transformer(Module):
         if exists(times):
             _, x = unpack(x, time_packed_shape, 'b * d')
 
-        return self.final_norm(x, **norm_kwargs)
+        return self.final_norm(x)
 
 # main classes
 
