@@ -245,13 +245,17 @@ class TextAudioCrossCondition(Module):
         self,
         dim,
         dim_text,
+        cond_audio_to_text = True
     ):
         super().__init__()
-        self.audio_to_text = nn.Linear(dim, dim_text, bias = False)
         self.text_to_audio = nn.Linear(dim_text, dim, bias = False)
-
-        nn.init.zeros_(self.audio_to_text.weight)
         nn.init.zeros_(self.text_to_audio.weight)
+
+        self.cond_audio_to_text = cond_audio_to_text
+
+        if cond_audio_to_text:
+            self.audio_to_text = nn.Linear(dim, dim_text, bias = False)
+            nn.init.zeros_(self.audio_to_text.weight)
 
     def forward(
         self,
@@ -259,7 +263,7 @@ class TextAudioCrossCondition(Module):
         text: Float['b n dt']
     ):
         text_cond = self.text_to_audio(text)
-        audio_cond = self.audio_to_text(audio)
+        audio_cond = self.audio_to_text(audio) if self.cond_audio_to_text else 0.
 
         return audio + text_cond, text + audio_cond
 
@@ -337,6 +341,7 @@ class Transformer(Module):
             )
 
         for ind in range(depth):
+            is_last = ind == (depth - 1)
             is_later_half = ind >= (depth // 2)
 
             # speech related
@@ -363,7 +368,7 @@ class Transformer(Module):
 
             # cross condition
 
-            cross_condition = TextAudioCrossCondition(dim = dim, dim_text = dim_text)
+            cross_condition = TextAudioCrossCondition(dim = dim, dim_text = dim_text, cond_audio_to_text = not is_last)
 
             self.layers.append(ModuleList([
                 gateloop,
