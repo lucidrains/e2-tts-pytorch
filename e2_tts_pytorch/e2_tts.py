@@ -279,6 +279,8 @@ class Transformer(Module):
         depth = 8,
         heads = 8,
         dim_head = 64,
+        text_heads = None,
+        text_dim_head = None,
         cond_on_time = True,
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         abs_pos_emb = True,
@@ -303,6 +305,9 @@ class Transformer(Module):
 
         dim_text = default(dim_text, dim // 2)
         self.dim_text = dim_text
+
+        text_heads = default(text_heads, heads)
+        text_dim_head = default(text_dim_head, dim_head)
 
         self.skip_connect_type = skip_connect_type
         needs_skip_proj = skip_connect_type == 'concat'
@@ -361,7 +366,7 @@ class Transformer(Module):
             # text related
 
             text_attn_norm = RMSNorm(dim_text)
-            text_attn = Attention(dim = dim_text, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
+            text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
 
             text_ff_norm = RMSNorm(dim_text)
             text_ff = FeedForward(dim = dim_text, glu = True, dropout = dropout, **ff_kwargs)
