@@ -248,13 +248,13 @@ class TextAudioCrossCondition(Module):
         cond_audio_to_text = True
     ):
         super().__init__()
-        self.text_to_audio = nn.Linear(dim_text, dim, bias = False)
+        self.text_to_audio = nn.Linear(dim_text + dim, dim, bias = False)
         nn.init.zeros_(self.text_to_audio.weight)
 
         self.cond_audio_to_text = cond_audio_to_text
 
         if cond_audio_to_text:
-            self.audio_to_text = nn.Linear(dim, dim_text, bias = False)
+            self.audio_to_text = nn.Linear(dim + dim_text, dim_text, bias = False)
             nn.init.zeros_(self.audio_to_text.weight)
 
     def forward(
@@ -262,8 +262,10 @@ class TextAudioCrossCondition(Module):
         audio: Float['b n d'],
         text: Float['b n dt']
     ):
-        text_cond = self.text_to_audio(text)
-        audio_cond = self.audio_to_text(audio) if self.cond_audio_to_text else 0.
+        audio_text, _ = pack((audio, text), 'b n *')
+
+        text_cond = self.text_to_audio(audio_text)
+        audio_cond = self.audio_to_text(audio_text) if self.cond_audio_to_text else 0.
 
         return audio + text_cond, text + audio_cond
 
@@ -741,6 +743,10 @@ class E2TTS(Module):
 
         x = self.proj_in(x)
         cond = self.cond_proj_in(cond)
+
+        # add the condition, given as using voicebox-like scheme
+
+        x = x + cond
 
         # whether to use a text embedding
 
