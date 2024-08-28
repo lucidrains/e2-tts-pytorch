@@ -5,6 +5,8 @@
 
 Implementation of E2-TTS, <a href="https://arxiv.org/abs/2406.18009v1">Embarrassingly Easy Fully Non-Autoregressive Zero-Shot TTS</a>, in Pytorch
 
+The repository differs from the paper in that it uses a <a href="https://arxiv.org/abs/2107.10342">multistream transformer</a> for text and audio, with conditioning done every transformer block in the E2 manner.
+
 ## Appreciation
 
 - <a href="https://github.com/manmay-nakhashi">Manmay</a> for contributing <a href="https://github.com/lucidrains/e2-tts-pytorch/pull/1">working end-to-end training code</a>!
@@ -82,5 +84,16 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     year    = {2022},
     pages   = {22669-22679},
     url     = {https://api.semanticscholar.org/CorpusID:253581703}
+}
+```
+
+```bibtex
+@article{Burtsev2021MultiStreamT,
+    title     = {Multi-Stream Transformers},
+    author    = {Mikhail S. Burtsev and Anna Rumshisky},
+    journal   = {ArXiv},
+    year      = {2021},
+    volume    = {abs/2107.10342},
+    url       = {https://api.semanticscholar.org/CorpusID:236171087}
 }
 ```
