@@ -12,7 +12,7 @@ from __future__ import annotations
 from random import random
 from functools import partial
 from collections import namedtuple
-from typing import Literal, List, Callable
+from typing import Literal, Callable
 
 import torch
 from torch import nn, tensor, from_numpy
@@ -68,7 +68,7 @@ class Identity(Module):
 # simple utf-8 tokenizer, since paper went character based
 
 def list_str_to_tensor(
-    text: List[str],
+    text: list[str],
     padding_value = -1
 ) -> Int['b nt']:
 
@@ -84,7 +84,7 @@ def get_g2p_en_encode():
     g2p = G2p()
 
     def encode(
-        text: List[str],
+        text: list[str],
         padding_value = -1
     ) -> Int['b nt']:
 
@@ -367,6 +367,8 @@ class Transformer(Module):
 
             # text related
 
+            text_gateloop = SimpleGateLoopLayer(dim = dim_text)
+
             text_attn_norm = RMSNorm(dim_text)
             text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
 
@@ -386,6 +388,7 @@ class Transformer(Module):
                 ff_norm,
                 ff,
                 ff_adaln_zero,
+                text_gateloop,
                 text_attn_norm,
                 text_attn,
                 text_ff_norm,
@@ -461,6 +464,7 @@ class Transformer(Module):
             ff_norm,
             ff,
             maybe_ff_adaln_zero,
+            text_gateloop,
             text_attn_norm,
             text_attn,
             text_ff_norm,
@@ -473,6 +477,8 @@ class Transformer(Module):
             # smaller text transformer
 
             if exists(text_embed):
+                text_embed = text_gateloop(text_embed) + text_embed
+
                 text_embed = text_attn(text_attn_norm(text_embed), rotary_pos_emb = text_rotary_pos_emb, mask = mask) + text_embed
 
                 text_embed = text_ff(text_ff_norm(text_embed)) + text_embed
@@ -528,7 +534,7 @@ class DurationPredictor(Module):
         mel_spec_kwargs: dict = dict(),
         char_embed_kwargs: dict = dict(),
         text_num_embeds = None,
-        tokenizer: str |  Callable[[List[str]], Int['b nt']] = 'char_utf8'
+        tokenizer: str |  Callable[[list[str]], Int['b nt']] = 'char_utf8'
     ):
         super().__init__()
 
@@ -577,7 +583,7 @@ class DurationPredictor(Module):
         self,
         x: Float['b n d'] | Float['b nw'],
         *,
-        text: Int['b nt'] | List[str] | None = None,
+        text: Int['b nt'] | list[str] | None = None,
         lens: Int['b'] | None = None,
         return_loss = True
     ):
@@ -656,10 +662,10 @@ class E2TTS(Module):
         mel_spec_module: Module | None = None,
         char_embed_kwargs: dict = dict(),
         mel_spec_kwargs: dict = dict(),
-        frac_lengths_mask: Tuple[float, float] = (0.7, 1.),
+        frac_lengths_mask: tuple[float, float] = (0.7, 1.),
         immiscible = False,
         text_num_embeds = None,
-        tokenizer: str |  Callable[[List[str]], Int['b nt']] = 'char_utf8'
+        tokenizer: str |  Callable[[list[str]], Int['b nt']] = 'char_utf8'
     ):
         super().__init__()
 
@@ -786,7 +792,7 @@ class E2TTS(Module):
         self,
         cond: Float['b n d'] | Float['b nw'],
         *,
-        text: Int['b nt'] | List[str] | None = None,
+        text: Int['b nt'] | list[str] | None = None,
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
         steps = 32,
@@ -877,7 +883,7 @@ class E2TTS(Module):
         self,
         inp: Float['b n d'] | Float['b nw'], # mel or raw wave
         *,
-        text: Int['b nt'] | List[str] | None = None,
+        text: Int['b nt'] | list[str] | None = None,
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
     ):
