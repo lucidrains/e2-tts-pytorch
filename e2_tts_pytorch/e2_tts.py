@@ -293,7 +293,8 @@ class Transformer(Module):
             gate_value_heads = True,
             softclamp_logits = True,
         ),
-        ff_kwargs: dict = dict()
+        ff_kwargs: dict = dict(),
+        use_gateloop = True
     ):
         super().__init__()
         assert divisible_by(depth, 2), 'depth needs to be even'
@@ -353,7 +354,7 @@ class Transformer(Module):
 
             # speech related
 
-            gateloop = SimpleGateLoopLayer(dim = dim)
+            gateloop = SimpleGateLoopLayer(dim = dim) if use_gateloop else None
 
             attn_norm = rmsnorm_klass(dim)
             attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
@@ -367,7 +368,7 @@ class Transformer(Module):
 
             # text related
 
-            text_gateloop = SimpleGateLoopLayer(dim = dim_text)
+            text_gateloop = SimpleGateLoopLayer(dim = dim_text) if use_gateloop else None
 
             text_attn_norm = RMSNorm(dim_text)
             text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
@@ -477,7 +478,9 @@ class Transformer(Module):
             # smaller text transformer
 
             if exists(text_embed):
-                text_embed = text_gateloop(text_embed) + text_embed
+
+                if exists(text_gateloop):
+                    text_embed = text_gateloop(text_embed) + text_embed
 
                 text_embed = text_attn(text_attn_norm(text_embed), rotary_pos_emb = text_rotary_pos_emb, mask = mask) + text_embed
 
@@ -504,9 +507,10 @@ class Transformer(Module):
                     # additive
                     x = x + skip
 
-            # associative scan
+            # maybe associative scan
 
-            x = gateloop(x) + x
+            if exists(gateloop):
+                x = gateloop(x) + x
 
             # attention and feedforward blocks
 
