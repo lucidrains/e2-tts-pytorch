@@ -215,6 +215,19 @@ class AdaLNZero(Module):
         gamma = self.to_gamma(condition).sigmoid()
         return x * gamma
 
+# random projection fourier embedding
+
+class RandomFourierEmbed(Module):
+    def __init__(self, dim):
+        super().__init__()
+        assert divisible_by(dim, 2)
+        self.register_buffer('weights', torch.randn(dim // 2))
+
+    def forward(self, x):
+        freqs = einx.multiply('i, j -> i j', x, self.weights) * 2 * torch.pi
+        fourier_embed, _ = pack((x, freqs.sin(), freqs.cos()), 'b *')
+        return fourier_embed
+
 # character embedding
 
 class CharacterEmbed(Module):
@@ -343,8 +356,8 @@ class Transformer(Module):
 
         if cond_on_time:
             self.time_cond_mlp = Sequential(
-                Rearrange('... -> ... 1'),
-                Linear(1, dim),
+                RandomFourierEmbed(dim),
+                Linear(dim + 1, dim),
                 nn.SiLU()
             )
 
