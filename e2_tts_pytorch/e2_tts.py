@@ -294,8 +294,10 @@ class Transformer(Module):
         depth = 8,
         heads = 8,
         dim_head = 64,
+        ff_mult = 4,
         text_heads = None,
         text_dim_head = None,
+        text_ff_mult = None,
         cond_on_time = True,
         skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         abs_pos_emb = True,
@@ -324,6 +326,7 @@ class Transformer(Module):
 
         text_heads = default(text_heads, heads)
         text_dim_head = default(text_dim_head, dim_head)
+        text_ff_mult = default(text_ff_mult, ff_mult)
 
         self.skip_connect_type = skip_connect_type
         needs_skip_proj = skip_connect_type == 'concat'
@@ -374,7 +377,7 @@ class Transformer(Module):
             attn_adaln_zero = postbranch_klass()
 
             ff_norm = rmsnorm_klass(dim)
-            ff = FeedForward(dim = dim, glu = True, dropout = dropout, **ff_kwargs)
+            ff = FeedForward(dim = dim, glu = True, mult = ff_mult, dropout = dropout, **ff_kwargs)
             ff_adaln_zero = postbranch_klass()
 
             skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj and is_later_half else None
@@ -387,7 +390,7 @@ class Transformer(Module):
             text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
 
             text_ff_norm = RMSNorm(dim_text)
-            text_ff = FeedForward(dim = dim_text, glu = True, dropout = dropout, **ff_kwargs)
+            text_ff = FeedForward(dim = dim_text, glu = True, mult = text_ff_mult, dropout = dropout, **ff_kwargs)
 
             # cross condition
 
