@@ -295,6 +295,7 @@ class Transformer(Module):
         heads = 8,
         dim_head = 64,
         ff_mult = 4,
+        text_depth = None,
         text_heads = None,
         text_dim_head = None,
         text_ff_mult = None,
@@ -327,6 +328,9 @@ class Transformer(Module):
         text_heads = default(text_heads, heads)
         text_dim_head = default(text_dim_head, dim_head)
         text_ff_mult = default(text_ff_mult, ff_mult)
+        text_depth = default(text_depth, depth)
+
+        assert 1 <= text_depth <= depth, 'must have at least 1 layer of text conditioning, but less than total number of speech layers'
 
         self.skip_connect_type = skip_connect_type
         needs_skip_proj = skip_connect_type == 'concat'
@@ -367,6 +371,7 @@ class Transformer(Module):
         for ind in range(depth):
             is_last = ind == (depth - 1)
             is_later_half = ind >= (depth // 2)
+            has_text = ind < text_depth
 
             # speech related
 
@@ -382,35 +387,44 @@ class Transformer(Module):
 
             skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj and is_later_half else None
 
-            # text related
+            text_modules = None
 
-            text_gateloop = SimpleGateLoopLayer(dim = dim_text) if use_gateloop else None
+            if has_text:
+                # text related
 
-            text_attn_norm = RMSNorm(dim_text)
-            text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
+                text_gateloop = SimpleGateLoopLayer(dim = dim_text) if use_gateloop else None
 
-            text_ff_norm = RMSNorm(dim_text)
-            text_ff = FeedForward(dim = dim_text, glu = True, mult = text_ff_mult, dropout = dropout, **ff_kwargs)
+                text_attn_norm = RMSNorm(dim_text)
+                text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
 
-            # cross condition
+                text_ff_norm = RMSNorm(dim_text)
+                text_ff = FeedForward(dim = dim_text, glu = True, mult = text_ff_mult, dropout = dropout, **ff_kwargs)
 
-            cross_condition = TextAudioCrossCondition(dim = dim, dim_text = dim_text, cond_audio_to_text = not is_last)
+                # cross condition
+
+                cross_condition = TextAudioCrossCondition(dim = dim, dim_text = dim_text, cond_audio_to_text = not is_last)
+
+                text_modules = ModuleList([
+                    text_gateloop,
+                    text_attn_norm,
+                    text_attn,
+                    text_ff_norm,
+                    text_ff,
+                    cross_condition
+                ])
 
             self.layers.append(ModuleList([
-                gateloop,
-                skip_proj,
-                attn_norm,
-                attn,
-                attn_adaln_zero,
-                ff_norm,
-                ff,
-                ff_adaln_zero,
-                text_gateloop,
-                text_attn_norm,
-                text_attn,
-                text_ff_norm,
-                text_ff,
-                cross_condition
+                ModuleList([
+                    gateloop,
+                    skip_proj,
+                    attn_norm,
+                    attn,
+                    attn_adaln_zero,
+                    ff_norm,
+                    ff,
+                    ff_adaln_zero,
+                ]),
+                text_modules
             ]))
 
         self.final_norm = RMSNorm(dim)
@@ -472,28 +486,32 @@ class Transformer(Module):
 
         # go through the layers
 
-        for ind, (
-            gateloop,
-            maybe_skip_proj,
-            attn_norm,
-            attn,
-            maybe_attn_adaln_zero,
-            ff_norm,
-            ff,
-            maybe_ff_adaln_zero,
-            text_gateloop,
-            text_attn_norm,
-            text_attn,
-            text_ff_norm,
-            text_ff,
-            cross_condition
-        ) in enumerate(self.layers):
-
+        for ind, (speech_modules, text_modules) in enumerate(self.layers):
             layer = ind + 1
+
+            (
+                gateloop,
+                maybe_skip_proj,
+                attn_norm,
+                attn,
+                maybe_attn_adaln_zero,
+                ff_norm,
+                ff,
+                maybe_ff_adaln_zero
+            ) = speech_modules
 
             # smaller text transformer
 
-            if exists(text_embed):
+            if exists(text_embed) and exists(text_modules):
+
+                (
+                    text_gateloop,
+                    text_attn_norm,
+                    text_attn,
+                    text_ff_norm,
+                    text_ff,
+                    cross_condition
+                ) = text_modules
 
                 if exists(text_gateloop):
                     text_embed = text_gateloop(text_embed) + text_embed
