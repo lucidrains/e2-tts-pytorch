@@ -369,7 +369,6 @@ class Transformer(Module):
             )
 
         for ind in range(depth):
-            is_last = ind == (depth - 1)
             is_later_half = ind >= (depth // 2)
             has_text = ind < text_depth
 
@@ -387,6 +386,17 @@ class Transformer(Module):
 
             skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj and is_later_half else None
 
+            speech_modules = ModuleList([
+                gateloop,
+                skip_proj,
+                attn_norm,
+                attn,
+                attn_adaln_zero,
+                ff_norm,
+                ff,
+                ff_adaln_zero,
+            ])
+
             text_modules = None
 
             if has_text:
@@ -402,6 +412,8 @@ class Transformer(Module):
 
                 # cross condition
 
+                is_last = ind == (text_depth - 1)
+
                 cross_condition = TextAudioCrossCondition(dim = dim, dim_text = dim_text, cond_audio_to_text = not is_last)
 
                 text_modules = ModuleList([
@@ -414,16 +426,7 @@ class Transformer(Module):
                 ])
 
             self.layers.append(ModuleList([
-                ModuleList([
-                    gateloop,
-                    skip_proj,
-                    attn_norm,
-                    attn,
-                    attn_adaln_zero,
-                    ff_norm,
-                    ff,
-                    ff_adaln_zero,
-                ]),
+                speech_modules,
                 text_modules
             ]))
 
