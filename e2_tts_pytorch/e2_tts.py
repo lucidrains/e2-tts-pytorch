@@ -704,6 +704,7 @@ class E2TTS(Module):
         char_embed_kwargs: dict = dict(),
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.),
+        concat_cond = False,
         immiscible = False,
         text_num_embeds = None,
         tokenizer: str |  Callable[[list[str]], Int['b nt']] = 'char_utf8'
@@ -746,8 +747,18 @@ class E2TTS(Module):
  
         self.num_channels = num_channels
 
-        self.proj_in = Linear(num_channels, dim)
-        self.cond_proj_in = Linear(num_channels, dim)
+        # whether to concat condition and project rather than project both and sum
+
+        self.concat_cond = concat_cond
+
+        if concat_cond:
+            self.proj_in = nn.Linear(num_channels * 2, dim)
+        else:
+            self.proj_in = nn.Linear(num_channels, dim)
+            self.cond_proj_in = nn.Linear(num_channels, dim)
+
+        # to prediction
+
         self.to_pred = Linear(dim, num_channels)
 
         # tokenizer and text embed
@@ -788,12 +799,18 @@ class E2TTS(Module):
         seq_len = x.shape[-2]
         drop_text_cond = default(drop_text_cond, self.training and random() < self.cond_drop_prob)
 
+        if self.concat_cond:
+            # concat condition, given as using voicebox-like scheme
+            x = torch.cat((cond, x), dim = -1)
+
         x = self.proj_in(x)
-        cond = self.cond_proj_in(cond)
 
-        # add the condition, given as using voicebox-like scheme
+        if not self.concat_cond:
+            # an alternative is to simply sum the condition
+            # seems to work fine
 
-        x = x + cond
+            cond = self.cond_proj_in(cond)
+            x = x + cond
 
         # whether to use a text embedding
 
