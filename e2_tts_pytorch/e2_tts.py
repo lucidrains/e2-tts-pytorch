@@ -147,6 +147,11 @@ def maybe_masked_mean(
 
     return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
 
+def interpolate_1d(x: Tensor, length: int, mode = 'bilinear'):
+    x = rearrange(x, 'b n d -> b d n 1')
+    x = F.interpolate(x, (length, 1), mode = mode)
+    return rearrange(x, 'b d n 1 -> b n d')
+
 # to mel spec
 
 class MelSpec(Module):
