@@ -11,6 +11,7 @@ dt - dimension text
 from __future__ import annotations
 from random import random
 from functools import partial
+from itertools import zip_longest
 from collections import namedtuple
 from typing import Literal, Callable
 
@@ -46,6 +47,8 @@ from e2_tts_pytorch.tensor_typing import (
     Bool
 )
 
+pad_sequence = partial(pad_sequence, batch_first = True)
+
 # constants
 
 E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred'])
@@ -73,7 +76,7 @@ def list_str_to_tensor(
 ) -> Int['b nt']:
 
     list_tensors = [tensor([*bytes(t, 'UTF-8')]) for t in text]
-    padded_tensor = pad_sequence(list_tensors, padding_value = -1, batch_first = True)
+    padded_tensor = pad_sequence(list_tensors, padding_value = -1)
     return padded_tensor
 
 # simple english phoneme-based tokenizer
@@ -90,7 +93,7 @@ def get_g2p_en_encode():
 
         phonemes = [g2p(t) for t in text]
         list_tensors = [tensor([g2p.p2idx[p] for p in one_phoneme]) for one_phoneme in phonemes]
-        padded_tensor = pad_sequence(list_tensors, padding_value = -1, batch_first = True)
+        padded_tensor = pad_sequence(list_tensors, padding_value = -1)
         return padded_tensor
 
     return encode
@@ -122,7 +125,8 @@ def mask_from_start_end_indices(
 
 def mask_from_frac_lengths(
     seq_len: Int['b'],
-    frac_lengths: Float['b']
+    frac_lengths: Float['b'],
+    max_length: int | None = None
 ):
     lengths = (frac_lengths * seq_len).long()
     max_start = seq_len - lengths
@@ -131,7 +135,12 @@ def mask_from_frac_lengths(
     start = (max_start * rand).long().clamp(min = 0)
     end = start + lengths
 
-    return mask_from_start_end_indices(seq_len, start, end)
+    out = mask_from_start_end_indices(seq_len, start, end)
+
+    if exists(max_length):
+        out = pad_to_length(out, max_length)
+
+    return out
 
 def maybe_masked_mean(
     t: Float['b n d'],
@@ -148,9 +157,20 @@ def maybe_masked_mean(
     return einx.divide('b d, b -> b d', num, den.clamp(min = 1.))
 
 def interpolate_1d(x: Tensor, length: int, mode = 'bilinear'):
-    x = rearrange(x, 'b n d -> b d n 1')
+    x = rearrange(x, 'n d -> 1 d n 1')
     x = F.interpolate(x, (length, 1), mode = mode)
-    return rearrange(x, 'b d n 1 -> b n d')
+    return rearrange(x, '1 d n 1 -> n d')
+
+def pad_to_length(
+    t: Tensor,
+    length: int,
+    value = None
+):
+    seq_len = t.shape[-1]
+    if length > seq_len:
+        t = F.pad(t, (0, length - seq_len), value = value)
+
+    return t[..., :length]
 
 # to mel spec
 
@@ -249,14 +269,87 @@ class CharacterEmbed(Module):
         self,
         text: Int['b nt'],
         max_seq_len: int,
+        **kwargs
     ) -> Float['b n d']:
 
         text = text + 1 # shift all other token ids up by 1 and use 0 as filler token
 
         text = text[:, :max_seq_len] # just curtail if character tokens are more than the mel spec tokens, one of the edge cases the paper did not address
-        text = F.pad(text, (0, max_seq_len - text.shape[1]), value = 0)
+        text = pad_to_length(text, max_seq_len, value = 0)
 
         return self.embed(text)
+
+# interpolated character embedding - improvisation to see if it could improve alignment at > 10s audio length
+
+class InterpolatedCharacterEmbed(Module):
+    def __init__(
+        self,
+        dim,
+        num_embeds = 256,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.embed = nn.Embedding(num_embeds, dim)
+
+        self.abs_pos_mlp = Sequential(
+            Rearrange('... -> ... 1'),
+            Linear(1, dim),
+            nn.SiLU(),
+            Linear(dim, dim)
+        )
+
+    def forward(
+        self,
+        text: Int['b nt'],
+        max_seq_len: int,
+        mask: Bool['b n'] | None = None
+    ) -> Float['b n d']:
+
+        device = text.device
+        seq = torch.arange(max_seq_len, device = device)
+
+        mask = default(mask, (None,))
+
+        interp_embeds = []
+        interp_abs_positions = []
+
+        for one_text, one_mask in zip_longest(text, mask):
+
+            valid_text = one_text >= 0
+            one_text = one_text[valid_text]
+            one_text_embed = self.embed(one_text)
+
+            # save the absolute positions
+
+            text_seq_len = one_text.shape[0]
+
+            # determine audio sequence length from mask
+
+            audio_seq_len = max_seq_len
+            if exists(one_mask):
+                audio_seq_len = one_mask.sum().long().item()
+
+            # interpolate text embedding to audio embedding length
+
+            interp_text_embed = interpolate_1d(one_text_embed, audio_seq_len)
+            interp_abs_pos = torch.linspace(0, text_seq_len, audio_seq_len, device = device)
+
+            interp_embeds.append(interp_text_embed)
+            interp_abs_positions.append(interp_abs_pos)
+
+        interp_embeds = pad_sequence(interp_embeds)
+        interp_abs_positions = pad_sequence(interp_abs_positions)
+
+        interp_embeds = F.pad(interp_embeds, (0, 0, 0, max_seq_len - interp_embeds.shape[-2]))
+        interp_abs_positions = pad_to_length(interp_abs_positions, max_seq_len)
+
+        # pass interp absolute positions through mlp for implicit positions
+
+        interp_embeds = interp_embeds + self.abs_pos_mlp(interp_abs_positions)
+
+        return interp_embeds
+
+# text audio cross conditioning in multistream setup
 
 class TextAudioCrossCondition(Module):
     def __init__(
@@ -711,6 +804,7 @@ class E2TTS(Module):
         frac_lengths_mask: tuple[float, float] = (0.7, 1.),
         concat_cond = False,
         immiscible = False,
+        interpolated_text = False,
         text_num_embeds = None,
         tokenizer: str |  Callable[[list[str]], Int['b nt']] = 'char_utf8'
     ):
@@ -782,7 +876,11 @@ class E2TTS(Module):
 
         self.cond_drop_prob = cond_drop_prob
 
-        self.embed_text = CharacterEmbed(dim_text, num_embeds = text_num_embeds, **char_embed_kwargs)
+        # text embedding
+
+        text_embed_klass = CharacterEmbed if not interpolated_text else InterpolatedCharacterEmbed
+
+        self.embed_text = text_embed_klass(dim_text, num_embeds = text_num_embeds, **char_embed_kwargs)
 
         # immiscible flow - https://arxiv.org/abs/2406.12303
 
@@ -821,7 +919,7 @@ class E2TTS(Module):
 
         text_embed = None
         if exists(text) and not drop_text_cond:
-            text_embed = self.embed_text(text, seq_len)
+            text_embed = self.embed_text(text, seq_len, mask = mask)
 
         # attend
 
@@ -975,7 +1073,7 @@ class E2TTS(Module):
         # get a random span to mask out for training conditionally
 
         frac_lengths = torch.zeros((batch,), device = self.device).float().uniform_(*self.frac_lengths_mask)
-        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths)
+        rand_span_mask = mask_from_frac_lengths(lens, frac_lengths, max_length = seq_len)
 
         if exists(mask):
             rand_span_mask &= mask
@@ -1011,14 +1109,15 @@ class E2TTS(Module):
 
         # only predict what is within the random mask span for infilling
 
-        cond = torch.where(
-            rand_span_mask[..., None],
+        cond = einx.where(
+            'b n, b n d, b n d -> b n d',
+            rand_span_mask,
             torch.zeros_like(x1), x1
         )
 
         # transformer and prediction head
 
-        pred = self.transformer_with_pred_head(w, cond, times = times, text = text)
+        pred = self.transformer_with_pred_head(w, cond, times = times, text = text, mask = mask)
 
         # flow matching loss
 
