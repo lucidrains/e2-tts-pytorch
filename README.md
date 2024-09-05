@@ -11,7 +11,9 @@ The repository differs from the paper in that it uses a <a href="https://arxiv.o
 
 - <a href="https://github.com/manmay-nakhashi">Manmay</a> for contributing <a href="https://github.com/lucidrains/e2-tts-pytorch/pull/1">working end-to-end training code</a>!
 
-- <a href="https://github.com/lucasnewman">Lucas Newman</a> for the code contributions, helpful feedback, and for sharing the first set of positive experiments
+- <a href="https://github.com/lucasnewman">Lucas Newman</a> for the code contributions, helpful feedback, and for sharing the first set of positive experiments!
+
+- <a href="https://github.com/JingRH">Jing</a> for sharing the second positive result with a multilingual (English + Chinese) dataset!
 
 ## Install
 
