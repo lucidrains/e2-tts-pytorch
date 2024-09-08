@@ -31,7 +31,6 @@ dependencies = [
     'g2p-en',
     'jaxtyping',
     'loguru',
-    'scipy',
     'tensorboard',
     'torch>=2.0',
     'torchdiffeq',

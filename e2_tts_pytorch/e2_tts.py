@@ -28,8 +28,6 @@ import einx
 from einops.layers.torch import Rearrange
 from einops import einsum, rearrange, repeat, reduce, pack, unpack
 
-from scipy.optimize import linear_sum_assignment
-
 from x_transformers import (
     Attention,
     FeedForward,
@@ -693,7 +691,6 @@ class DurationPredictor(Module):
 class E2TTS(Module):
     def __init__(
         self,
-        sigma = 0.,
         transformer: dict | Transformer = None,
         duration_predictor: dict | DurationPredictor | None = None,
         odeint_kwargs: dict = dict(
@@ -708,7 +705,6 @@ class E2TTS(Module):
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.),
         concat_cond = False,
-        immiscible = False,
         text_num_embeds = None,
         tokenizer: str |  Callable[[list[str]], Int['b nt']] = 'char_utf8'
     ):
@@ -734,10 +730,6 @@ class E2TTS(Module):
         self.frac_lengths_mask = frac_lengths_mask
 
         self.duration_predictor = duration_predictor
-
-        # conditional flow related
-
-        self.sigma = sigma
 
         # sampling
 
@@ -783,10 +775,6 @@ class E2TTS(Module):
         # text embedding
 
         self.embed_text = CharacterEmbed(dim_text, num_embeds = text_num_embeds, **char_embed_kwargs)
-
-        # immiscible flow - https://arxiv.org/abs/2406.12303
-
-        self.immiscible = immiscible
 
     @property
     def device(self):
@@ -957,7 +945,7 @@ class E2TTS(Module):
             inp = rearrange(inp, 'b d n -> b n d')
             assert inp.shape[-1] == self.num_channels
 
-        batch, seq_len, dtype, device, σ = *inp.shape[:2], inp.dtype, self.device, self.sigma
+        batch, seq_len, dtype, device = *inp.shape[:2], inp.dtype, self.device
 
         # handle text as string
 
@@ -991,13 +979,6 @@ class E2TTS(Module):
 
         x0 = torch.randn_like(x1)
 
-        # maybe immiscible flow
-
-        if self.immiscible:
-            cost = torch.cdist(x1.flatten(1), x0.flatten(1))
-            _, reorder_indices = linear_sum_assignment(cost.cpu())
-            x0 = x0[from_numpy(reorder_indices).to(cost.device)]
-
         # t is random times from above
 
         times = torch.rand((batch,), dtype = dtype, device = self.device)
@@ -1005,9 +986,9 @@ class E2TTS(Module):
 
         # sample xt (w in the paper)
 
-        w = (1 - (1 - σ) * t) * x0 + t * x1
+        w = (1. - t) * x0 + t * x1
 
-        flow = x1 - (1 - σ) * x0
+        flow = x1 - x0
 
         # only predict what is within the random mask span for infilling
 
