@@ -39,8 +39,6 @@ from x_transformers import (
 
 from x_transformers.x_transformers import RotaryEmbedding
 
-from gateloop_transformer import SimpleGateLoopLayer
-
 from e2_tts_pytorch.tensor_typing import (
     Float,
     Int,
@@ -332,7 +330,6 @@ class Transformer(Module):
             softclamp_logits = True,
         ),
         ff_kwargs: dict = dict(),
-        use_gateloop = True
     ):
         super().__init__()
         assert divisible_by(depth, 2), 'depth needs to be even'
@@ -396,8 +393,6 @@ class Transformer(Module):
 
             # speech related
 
-            gateloop = SimpleGateLoopLayer(dim = dim) if use_gateloop else None
-
             attn_norm = rmsnorm_klass(dim)
             attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
             attn_adaln_zero = postbranch_klass()
@@ -409,7 +404,6 @@ class Transformer(Module):
             skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj and is_later_half else None
 
             speech_modules = ModuleList([
-                gateloop,
                 skip_proj,
                 attn_norm,
                 attn,
@@ -424,8 +418,6 @@ class Transformer(Module):
             if has_text:
                 # text related
 
-                text_gateloop = SimpleGateLoopLayer(dim = dim_text) if use_gateloop else None
-
                 text_attn_norm = RMSNorm(dim_text)
                 text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
 
@@ -439,7 +431,6 @@ class Transformer(Module):
                 cross_condition = TextAudioCrossCondition(dim = dim, dim_text = dim_text, cond_audio_to_text = not is_last)
 
                 text_modules = ModuleList([
-                    text_gateloop,
                     text_attn_norm,
                     text_attn,
                     text_ff_norm,
@@ -515,7 +506,6 @@ class Transformer(Module):
             layer = ind + 1
 
             (
-                gateloop,
                 maybe_skip_proj,
                 attn_norm,
                 attn,
@@ -530,16 +520,12 @@ class Transformer(Module):
             if exists(text_embed) and exists(text_modules):
 
                 (
-                    text_gateloop,
                     text_attn_norm,
                     text_attn,
                     text_ff_norm,
                     text_ff,
                     cross_condition
                 ) = text_modules
-
-                if exists(text_gateloop):
-                    text_embed = text_gateloop(text_embed) + text_embed
 
                 text_embed = text_attn(text_attn_norm(text_embed), rotary_pos_emb = text_rotary_pos_emb, mask = mask) + text_embed
 
@@ -565,11 +551,6 @@ class Transformer(Module):
                 elif skip_connect_type == 'add':
                     # additive
                     x = x + skip
-
-            # maybe associative scan
-
-            if exists(gateloop):
-                x = gateloop(x) + x
 
             # attention and feedforward blocks
 
