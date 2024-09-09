@@ -50,8 +50,7 @@ e2tts = E2TTS(
     duration_predictor = duration_predictor,
     transformer = dict(
         dim = 512,
-        depth = 8,
-        skip_connect_type = 'concat'
+        depth = 8        
     ),
 )
 

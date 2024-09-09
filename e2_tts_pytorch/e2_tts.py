@@ -332,7 +332,6 @@ class Transformer(Module):
         text_dim_head = None,
         text_ff_mult = None,
         cond_on_time = True,
-        skip_connect_type: Literal['add', 'concat', 'none'] = 'concat',
         abs_pos_emb = True,
         max_seq_len = 8192,
         dropout = 0.1,
@@ -362,9 +361,6 @@ class Transformer(Module):
         text_depth = default(text_depth, depth)
 
         assert 1 <= text_depth <= depth, 'must have at least 1 layer of text conditioning, but less than total number of speech layers'
-
-        self.skip_connect_type = skip_connect_type
-        needs_skip_proj = skip_connect_type == 'concat'
 
         self.depth = depth
         self.layers = ModuleList([])
@@ -413,7 +409,7 @@ class Transformer(Module):
             ff = FeedForward(dim = dim, glu = True, mult = ff_mult, dropout = dropout, **ff_kwargs)
             ff_adaln_zero = postbranch_klass()
 
-            skip_proj = Linear(dim * 2, dim, bias = False) if needs_skip_proj and is_later_half else None
+            skip_proj = Linear(dim * 2, dim, bias = False) if is_later_half else None
 
             speech_modules = ModuleList([
                 skip_proj,
@@ -508,8 +504,6 @@ class Transformer(Module):
 
         # skip connection related stuff
 
-        skip_connect_type = self.skip_connect_type
-
         skips = []
 
         # go through the layers
@@ -555,14 +549,8 @@ class Transformer(Module):
 
             if is_later_half:
                 skip = skips.pop()
-
-                if skip_connect_type == 'concat':
-                    # concatenative
-                    x = torch.cat((x, skip), dim = -1)
-                    x = maybe_skip_proj(x)
-                elif skip_connect_type == 'add':
-                    # additive
-                    x = x + skip
+                x = torch.cat((x, skip), dim = -1)
+                x = maybe_skip_proj(x)
 
             # attention and feedforward blocks
 
