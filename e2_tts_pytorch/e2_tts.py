@@ -14,6 +14,7 @@ from functools import partial
 from itertools import zip_longest
 from collections import namedtuple
 from typing import Literal, Callable
+from beartype import beartype
 
 import torch
 from torch import nn, tensor, from_numpy
@@ -304,6 +305,7 @@ class TextAudioCrossCondition(Module):
 # for use in both e2tts as well as duration module
 
 class Transformer(Module):
+    @beartype
     def __init__(
         self,
         *,
@@ -569,6 +571,7 @@ class Transformer(Module):
 # main classes
 
 class DurationPredictor(Module):
+    @beartype
     def __init__(
         self,
         transformer: dict | Transformer,
@@ -576,7 +579,10 @@ class DurationPredictor(Module):
         mel_spec_kwargs: dict = dict(),
         char_embed_kwargs: dict = dict(),
         text_num_embeds = None,
-        tokenizer: str |  Callable[[list[str]], Int['b nt']] = 'char_utf8'
+        tokenizer: (
+            Literal['char_utf8', 'phoneme_en'] |
+            Callable[[list[str]], Int['b nt']]
+        ) = 'char_utf8'
     ):
         super().__init__()
 
@@ -689,6 +695,8 @@ class DurationPredictor(Module):
         return F.mse_loss(pred, lens.float())
 
 class E2TTS(Module):
+
+    @beartype
     def __init__(
         self,
         transformer: dict | Transformer = None,
@@ -706,7 +714,10 @@ class E2TTS(Module):
         frac_lengths_mask: tuple[float, float] = (0.7, 1.),
         concat_cond = False,
         text_num_embeds = None,
-        tokenizer: str |  Callable[[list[str]], Int['b nt']] = 'char_utf8'
+        tokenizer: (
+            Literal['char_utf8', 'phoneme_en'] |
+            Callable[[list[str]], Int['b nt']]
+        ) = 'char_utf8'
     ):
         super().__init__()
 
