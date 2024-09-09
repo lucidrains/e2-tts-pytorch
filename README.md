@@ -15,6 +15,8 @@ The repository differs from the paper in that it uses a <a href="https://arxiv.o
 
 - <a href="https://github.com/JingRH">Jing</a> for sharing the second positive result with a multilingual (English + Chinese) dataset!
 
+- <a href="https://github.com/Coice">Coice</a> and <a href="https://github.com/manmay-nakhashi">Manmay</a> for reporting the third and fourth successful runs. Farewell alignment engineering
+
 ## Install
 
 ```bash
