@@ -13,12 +13,15 @@ from random import random
 from functools import partial
 from itertools import zip_longest
 from collections import namedtuple
+
 from typing import Literal, Callable
+
+import jaxtyping
 from beartype import beartype
 
 import torch
-from torch import nn, tensor, from_numpy
 import torch.nn.functional as F
+from torch import nn, tensor, Tensor, from_numpy
 from torch.nn import Module, ModuleList, Sequential, Linear
 from torch.nn.utils.rnn import pad_sequence
 
@@ -38,15 +41,20 @@ from x_transformers import (
 
 from x_transformers.x_transformers import RotaryEmbedding
 
-from e2_tts_pytorch.tensor_typing import (
-    Float,
-    Int,
-    Bool
-)
-
 pad_sequence = partial(pad_sequence, batch_first = True)
 
 # constants
+
+class TorchTyping:
+    def __init__(self, abstract_dtype):
+        self.abstract_dtype = abstract_dtype
+
+    def __getitem__(self, shapes: str):
+        return self.abstract_dtype[Tensor, shapes]
+
+Float = TorchTyping(jaxtyping.Float)
+Int   = TorchTyping(jaxtyping.Int)
+Bool  = TorchTyping(jaxtyping.Bool)
 
 E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred'])
 
