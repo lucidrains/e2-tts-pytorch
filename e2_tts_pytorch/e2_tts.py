@@ -83,17 +83,29 @@ from g2p_en import G2p
 def get_g2p_en_encode():
     g2p = G2p()
 
+    # used by @lucasnewman successfully here
+    # https://github.com/lucasnewman/e2-tts-pytorch/blob/ljspeech-test/e2_tts_pytorch/e2_tts.py
+
+    phoneme_to_index = g2p.p2idx
+    num_phonemes = len(phoneme_to_index)
+
+    extended_chars = [' ', ',', '.', '-', '!', '?', '\'', '"', '...', '..', '. .', '. . .', '. . . .', '. . . . .', '. ...', '... .', '.. ..']
+    num_extended_chars = len(extended_chars)
+
+    extended_chars_dict = {p: (num_phonemes + i) for i, p in enumerate(extended_chars)}
+    phoneme_to_index = {**phoneme_to_index, **extended_chars_dict}
+
     def encode(
         text: list[str],
         padding_value = -1
     ) -> Int['b nt']:
 
         phonemes = [g2p(t) for t in text]
-        list_tensors = [tensor([g2p.p2idx[p] for p in one_phoneme]) for one_phoneme in phonemes]
+        list_tensors = [tensor([phoneme_to_index[p] for p in one_phoneme]) for one_phoneme in phonemes]
         padded_tensor = pad_sequence(list_tensors, padding_value = -1)
         return padded_tensor
 
-    return encode
+    return encode, (num_phonemes + num_extended_chars)
 
 # tensor helpers
 
@@ -612,8 +624,7 @@ class DurationPredictor(Module):
             text_num_embeds = 256
             self.tokenizer = list_str_to_tensor
         elif tokenizer == 'phoneme_en':
-            text_num_embeds = 74
-            self.tokenizer = get_g2p_en_encode()
+            self.tokenizer, text_num_embeds = get_g2p_en_encode()
         else:
             raise ValueError(f'unknown tokenizer string {tokenizer}')
 
@@ -776,8 +787,7 @@ class E2TTS(Module):
             text_num_embeds = 256
             self.tokenizer = list_str_to_tensor
         elif tokenizer == 'phoneme_en':
-            text_num_embeds = 74
-            self.tokenizer = get_g2p_en_encode()
+            self.tokenizer, text_num_embeds = get_g2p_en_encode()
         else:
             raise ValueError(f'unknown tokenizer string {tokenizer}')
 
