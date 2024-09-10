@@ -875,10 +875,11 @@ class E2TTS(Module):
         steps = 32,
         cfg_strength = 1.,   # they used a classifier free guidance strength of 1.
         max_duration = 4096, # in case the duration predictor goes haywire
-        vocoder: Callable[[Float['b d n']], list[Float['_']]] | None = None
+        vocoder: Callable[[Float['b d n']], list[Float['_']]] | None = None,
+        return_raw_output: bool | None = None
     ) -> (
         Float['b n d'],
-        list[Float['nw']]
+        list[Float['_']]
     ):
         self.eval()
 
@@ -955,6 +956,11 @@ class E2TTS(Module):
         out = sampled
 
         out = torch.where(cond_mask, cond, out)
+
+        # able to return raw untransformed output, if not using mel rep
+
+        if exists(return_raw_output) and return_raw_output:
+            return out
 
         # take care of transforming mel to audio if `vocoder` is passed in, or if `use_vocos` is turned on
 
