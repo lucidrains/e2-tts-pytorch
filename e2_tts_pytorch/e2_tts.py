@@ -9,6 +9,8 @@ dt - dimension text
 """
 
 from __future__ import annotations
+
+from pathlib import Path
 from random import random
 from functools import partial
 from itertools import zip_longest
@@ -204,6 +206,7 @@ class MelSpec(Module):
     ):
         super().__init__()
         self.n_mel_channels = n_mel_channels
+        self.sampling_rate = sampling_rate
 
         self.mel_stft = torchaudio.transforms.MelSpectrogram(
             sample_rate = sampling_rate,
@@ -730,6 +733,7 @@ class E2TTS(Module):
         ) = 'char_utf8',
         use_vocos = True,
         pretrained_vocos_path = 'charactr/vocos-mel-24khz',
+        sampling_rate: int | None = None
     ):
         super().__init__()
 
@@ -764,6 +768,7 @@ class E2TTS(Module):
         num_channels = default(num_channels, self.mel_spec.n_mel_channels)
  
         self.num_channels = num_channels
+        self.sampling_rate = default(sampling_rate, getattr(self.mel_spec, 'sampling_rate', None))
 
         # whether to concat condition and project rather than project both and sum
 
@@ -876,7 +881,8 @@ class E2TTS(Module):
         cfg_strength = 1.,   # they used a classifier free guidance strength of 1.
         max_duration = 4096, # in case the duration predictor goes haywire
         vocoder: Callable[[Float['b d n']], list[Float['_']]] | None = None,
-        return_raw_output: bool | None = None
+        return_raw_output: bool | None = None,
+        save_to_filename: str | None = None
     ) -> (
         Float['b n d'],
         list[Float['_']]
@@ -977,10 +983,23 @@ class E2TTS(Module):
 
                 one_out = rearrange(one_out, 'n d -> 1 d n')
                 one_audio = self.vocos.decode(one_out)
-                one_audio = rearrange(one_audio, '1 nt -> nt')
+                one_audio = rearrange(one_audio, '1 nw -> nw')
                 audio.append(one_audio)
 
             out = audio
+
+        if exists(save_to_filename):
+            assert exists(vocoder) or exists(self.vocos)
+            assert exists(self.sampling_rate)
+
+            path = Path(save_to_filename)
+            parent_path = path.parents[0]
+            parent_path.mkdir(exist_ok = True, parents = True)
+
+            for ind, one_audio in enumerate(out):
+                one_audio = rearrange(one_audio, 'nw -> 1 nw')
+                save_path = str(parent_path / f'{ind + 1}.{path.name}')
+                torchaudio.save(save_path, one_audio.detach().cpu(), sample_rate = self.sampling_rate)
 
         return out
 
