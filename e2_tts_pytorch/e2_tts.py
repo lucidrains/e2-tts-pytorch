@@ -61,7 +61,7 @@ Float = TorchTyping(jaxtyping.Float)
 Int   = TorchTyping(jaxtyping.Int)
 Bool  = TorchTyping(jaxtyping.Bool)
 
-E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred'])
+E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred_flow', 'pred_data'])
 
 # helpers
 
@@ -1168,4 +1168,4 @@ class E2TTS(Module):
 
         loss = loss[rand_span_mask].mean()
 
-        return E2TTSReturn(loss, cond, pred)
+        return E2TTSReturn(loss, cond, pred, x0 + pred)

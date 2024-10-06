@@ -35,8 +35,12 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+def to_numpy(t):
+    return t.detach().cpu().numpy()
+
 # plot spectrogram 
 def plot_spectrogram(spectrogram):
+    spectrogram = to_numpy(spectrogram)
     fig, ax = plt.subplots(figsize=(10, 4))
     im = ax.imshow(spectrogram.T, aspect="auto", origin="lower", interpolation="none")
     plt.colorbar(im, ax=ax)
@@ -238,7 +242,7 @@ class E2Trainer:
                         dur_loss = self.duration_predictor(mel_spec, lens=batch.get('durations'))
                         self.writer.add_scalar('duration loss', dur_loss.item(), global_step)
 
-                    loss, cond, pred = self.model(mel_spec, text=text_inputs, lens=mel_lengths)
+                    loss, cond, pred, pred_data = self.model(mel_spec, text=text_inputs, lens=mel_lengths)
                     self.accelerator.backward(loss)
 
                     if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
@@ -262,9 +266,9 @@ class E2Trainer:
                 
                 if global_step % save_step == 0:
                     self.save_checkpoint(global_step)
-                    self.writer.add_figure("mel/target", plot_spectrogram(mel_spec[0,:,:].detach().cpu().numpy()), global_step)
-                    self.writer.add_figure("mel/mask", plot_spectrogram(cond[0,:,:].detach().cpu().numpy()), global_step)
-                    self.writer.add_figure("mel/prediction", plot_spectrogram(pred[0,:,:].detach().cpu().numpy()), global_step)
+                    self.writer.add_figure("mel/target", plot_spectrogram(mel_spec[0,:,:]), global_step)
+                    self.writer.add_figure("mel/mask", plot_spectrogram(cond[0,:,:]), global_step)
+                    self.writer.add_figure("mel/prediction", plot_spectrogram(pred_data[0,:,:]), global_step)
             
             epoch_loss /= len(train_dataloader)
             if self.accelerator.is_local_main_process:
