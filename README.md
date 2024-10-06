@@ -104,3 +104,12 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url       = {https://api.semanticscholar.org/CorpusID:236171087}
 }
 ```
+
+```bibtex
+@inproceedings{Sadat2024EliminatingOA,
+    title   = {Eliminating Oversaturation and Artifacts of High Guidance Scales in Diffusion Models},
+    author  = {Seyedmorteza Sadat and Otmar Hilliges and Romann M. Weber},
+    year    = {2024},
+    url     = {https://api.semanticscholar.org/CorpusID:273098845}
+}
+```

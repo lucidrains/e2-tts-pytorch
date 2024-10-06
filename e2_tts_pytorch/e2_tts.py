@@ -74,9 +74,33 @@ def default(v, d):
 def divisible_by(num, den):
     return (num % den) == 0
 
+def pack_one_with_inverse(x, pattern):
+    packed, packed_shape = pack([x], pattern)
+
+    def inverse(x, inverse_pattern = None):
+        inverse_pattern = default(inverse_pattern, pattern)
+        return unpack(x, packed_shape, inverse_pattern)[0]
+
+    return packed, inverse
+
 class Identity(Module):
     def forward(self, x, **kwargs):
         return x
+
+# tensor helpers
+
+def project(x, y):
+    x, inverse = pack_one_with_inverse(x, 'b *')
+    y, _ = pack_one_with_inverse(y, 'b *')
+
+    dtype = x.dtype
+    x, y = x.double(), y.double()
+    unit = F.normalize(y, dim = -1)
+
+    parallel = (x * unit).sum(dim = -1, keepdim = True) * unit
+    orthogonal = x - parallel
+
+    return inverse(parallel).to(dtype), inverse(orthogonal).to(dtype)
 
 # simple utf-8 tokenizer, since paper went character based
 
@@ -944,6 +968,8 @@ class E2TTS(Module):
         self,
         *args,
         cfg_strength: float = 1.,
+        remove_parallel_component: bool = True,
+        keep_parallel_frac: float = 0.,
         **kwargs,
     ):
         
@@ -954,7 +980,14 @@ class E2TTS(Module):
 
         null_pred = self.transformer_with_pred_head(*args, drop_text_cond = True, **kwargs)
 
-        return pred + (pred - null_pred) * cfg_strength
+        cfg_update = pred - null_pred
+
+        if remove_parallel_component:
+            # https://arxiv.org/abs/2410.02416
+            parallel, orthogonal = project(cfg_update, pred)
+            cfg_update = orthogonal + parallel * keep_parallel_frac
+
+        return pred + cfg_update * cfg_strength
 
     @torch.no_grad()
     def sample(
