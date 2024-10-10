@@ -26,6 +26,7 @@ import torch.nn.functional as F
 from torch import nn, tensor, Tensor, from_numpy
 from torch.nn import Module, ModuleList, Sequential, Linear
 from torch.nn.utils.rnn import pad_sequence
+from torch.amp import autocast
 
 import torchaudio
 from torchaudio.functional import DB_to_amplitude, resample
@@ -41,8 +42,6 @@ from x_transformers import (
     RMSNorm,
     AdaptiveRMSNorm,
 )
-
-from x_transformers.x_transformers import RotaryEmbedding
 
 from vocos import Vocos
 
@@ -303,6 +302,107 @@ class RandomFourierEmbed(Module):
         freqs = einx.multiply('i, j -> i j', x, self.weights) * 2 * torch.pi
         fourier_embed, _ = pack((x, freqs.sin(), freqs.cos()), 'b *')
         return fourier_embed
+
+# rotary embedding
+
+class RotaryEmbedding(nn.Module):
+    def __init__(
+        self,
+        dim,
+        use_xpos=False,
+        scale_base=512,
+        interpolation_factor=1.,
+        base=10000,
+        base_rescale_factor=1.
+    ):
+        super().__init__()
+        # Rescale the base value based on the dimension
+        base *= base_rescale_factor ** (dim / (dim - 2))
+
+        inv_freq = 1. / (base ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq)
+
+        assert interpolation_factor >= 1.
+        self.interpolation_factor = interpolation_factor
+
+        if not use_xpos:
+            self.register_buffer('scale', None)
+            return
+
+        scale = (torch.arange(0, dim, 2) + 0.4 * dim) / (1.4 * dim)
+
+        self.scale_base = scale_base
+        self.register_buffer('scale', scale)
+
+    def forward_from_seq_len(self, seq_len):
+        device = self.inv_freq.device
+
+        t = torch.arange(seq_len, device=device)
+        return self.forward(t)
+
+    @autocast(device_type="cuda", enabled=False)
+    def forward(self, t):
+        max_pos = t.max() + 1
+
+        freqs = torch.einsum('i , j -> i j', t.type_as(self.inv_freq), self.inv_freq) / self.interpolation_
+        freqs = torch.stack((freqs, freqs), dim=-1)
+        freqs = rearrange(freqs, '... d r -> ... (d r)')
+
+        if not exists(self.scale):
+            return freqs, 1.
+
+        power = (t - (max_pos // 2)) / self.scale_base
+        scale = self.scale ** rearrange(power, 'n -> n 1')
+        scale = torch.stack((scale, scale), dim=-1)
+        scale = rearrange(scale, '... d r -> ... (d r)')
+
+        return freqs, scale
+
+    @autocast(device_type="cuda", enabled=False)
+    def forward_from_seq_len_and_scale(self, max_len, seq_scale):
+        batch_size = seq_scale.shape[0]
+        device = self.inv_freq.device
+        max_pos = max_len
+
+        pos = torch.arange(max_pos, device=device).expand(batch_size, max_pos)
+        pos = pos * rearrange(seq_scale, "b -> b 1")
+
+        freqs = torch.einsum('bi , j -> bij', pos.type_as(self.inv_freq), self.inv_freq) / self.interpolati
+        freqs = torch.stack((freqs, freqs), dim=-1)
+        freqs = rearrange(freqs, 'b n d r -> b n (d r)')
+
+        if not exists(self.scale):
+            return freqs, 1.
+
+        power = (pos - (max_pos // 2)) / self.scale_base
+        scale = self.scale ** rearrange(power, 'b n -> b n 1')
+        scale = torch.stack((scale, scale), dim=-1)
+        scale = rearrange(scale, 'b n d r -> b n (d r)')
+
+        return freqs, scale
+
+def rotate_half(x):
+    x = rearrange(x, '... (d r) -> ... d r', r=2)
+    x1, x2 = x.unbind(dim=-1)
+    x = torch.stack((-x2, x1), dim=-1)
+    return rearrange(x, '... d r -> ... (d r)')
+
+@autocast(device_type="cuda", enabled=False)
+def apply_rotary_pos_emb(t, freqs, scale=1):
+    rot_dim, seq_len, orig_dtype = freqs.shape[-1], t.shape[-2], t.dtype
+
+    freqs = freqs[-seq_len:, :]
+    scale = scale[-seq_len:, :] if isinstance(scale, torch.Tensor) else scale
+
+    if t.ndim == 4 and freqs.ndim == 3:
+        freqs = rearrange(freqs, 'b n d -> b 1 n d')
+
+    # Partial rotary embeddings, Wang et al. GPT-J
+    t, t_unrotated = t[..., :rot_dim], t[..., rot_dim:]
+    t = (t * freqs.cos() * scale) + (rotate_half(t) * freqs.sin() * scale)
+    out = torch.cat((t, t_unrotated), dim=-1)
+
+    return out.type(orig_dtype)
 
 # character embedding
 
