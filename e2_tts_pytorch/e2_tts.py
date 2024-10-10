@@ -344,7 +344,7 @@ class RotaryEmbedding(nn.Module):
     def forward(self, t):
         max_pos = t.max() + 1
 
-        freqs = torch.einsum('i , j -> i j', t.type_as(self.inv_freq), self.inv_freq) / self.interpolation_
+        freqs = torch.einsum('i , j -> i j', t.type_as(self.inv_freq), self.inv_freq) / self.interpolation_factor
         freqs = torch.stack((freqs, freqs), dim=-1)
         freqs = rearrange(freqs, '... d r -> ... (d r)')
 
@@ -367,7 +367,7 @@ class RotaryEmbedding(nn.Module):
         pos = torch.arange(max_pos, device=device).expand(batch_size, max_pos)
         pos = pos * rearrange(seq_scale, "b -> b 1")
 
-        freqs = torch.einsum('bi , j -> bij', pos.type_as(self.inv_freq), self.inv_freq) / self.interpolati
+        freqs = torch.einsum('bi , j -> bij', pos.type_as(self.inv_freq), self.inv_freq) / self.interpolation_factor
         freqs = torch.stack((freqs, freqs), dim=-1)
         freqs = rearrange(freqs, 'b n d r -> b n (d r)')
 
@@ -596,7 +596,7 @@ class Transformer(Module):
         # rotary embedding
 
         self.rotary_emb = RotaryEmbedding(dim_head)
-        self.text_rotary_emb = RotaryEmbedding(dim_head)
+        self.text_rotary_emb = RotaryEmbedding(text_dim_head)
 
         # time conditioning
         # will use adaptive rmsnorm
@@ -676,8 +676,10 @@ class Transformer(Module):
         self,
         x: Float['b n d'],
         times: Float['b'] | Float[''] | None = None,
+        lens: Int['b'] | None = None,
         mask: Bool['b n'] | None = None,
         text_embed: Float['b n dt'] | None = None,
+        text_lens: Int['b'] | None = None,
     ):
         batch, seq_len, device = *x.shape[:2], x.device
 
@@ -711,7 +713,10 @@ class Transformer(Module):
 
         # rotary embedding
 
-        rotary_pos_emb = self.rotary_emb.forward_from_seq_len(x.shape[-2])
+        if exists(lens) and exists(text_lens):
+            rotary_pos_emb = self.rotary_emb.forward_from_seq_len_and_scale(x.shape[-2], text_lens / lens)
+        else:
+            rotary_pos_emb = self.rotary_emb.forward_from_seq_len(x.shape[-2])
 
         # text related
 
@@ -1027,6 +1032,7 @@ class E2TTS(Module):
         x: Float['b n d'],
         cond: Float['b n d'],
         times: Float['b'],
+        lens: Int['b'] | None = None,
         mask: Bool['b n'] | None = None,
         text: Int['b nt'] | None = None,
         drop_text_cond: bool | None = None
@@ -1050,7 +1056,9 @@ class E2TTS(Module):
         # whether to use a text embedding
 
         text_embed = None
+        text_lens = None
         if exists(text) and not drop_text_cond:
+            text_lens = (text != -1).sum(dim = -1)
             text_embed = self.embed_text(text, seq_len, mask = mask)
 
         # attend
@@ -1058,8 +1066,10 @@ class E2TTS(Module):
         attended = self.transformer(
             x,
             times = times,
+            lens = lens,
             mask = mask,
-            text_embed = text_embed
+            text_embed = text_embed,
+            text_lens = text_lens
         )
 
         return self.to_pred(attended)
@@ -1168,6 +1178,7 @@ class E2TTS(Module):
                 x,
                 step_cond,
                 times = t,
+                lens = lens,
                 text = text,
                 mask = mask,
                 cfg_strength = cfg_strength
@@ -1293,7 +1304,7 @@ class E2TTS(Module):
 
         # transformer and prediction head
 
-        pred = self.transformer_with_pred_head(w, cond, times = times, text = text, mask = mask)
+        pred = self.transformer_with_pred_head(w, cond, times = times, lens = lens, text = text, mask = mask)
 
         # flow matching loss
 
