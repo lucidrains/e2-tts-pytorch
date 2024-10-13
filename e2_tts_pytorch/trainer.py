@@ -244,7 +244,7 @@ class E2Trainer:
 
                     velocity_consistency_model = None
                     if self.need_velocity_consistent_loss and self.ema_model.initted:
-                        velocity_consistency_model = self.ema_model.ema_model
+                        velocity_consistency_model = self.accelerator.unwrap_model(self.ema_model).ema_model
 
                     loss, cond, pred, pred_data = self.model(
                         mel_spec,
@@ -262,7 +262,7 @@ class E2Trainer:
                     self.scheduler.step()
                     self.optimizer.zero_grad()
 
-                self.ema_model.update()
+                self.accelerator.unwrap_model(self.ema_model).update()
 
                 if self.accelerator.is_local_main_process:
                     logger.info(f"step {global_step+1}: loss = {loss.item():.4f}")
