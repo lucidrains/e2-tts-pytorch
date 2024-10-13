@@ -124,3 +124,14 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:218674528}
 }
 ```
+
+```bibtex
+@article{Yang2024ConsistencyFM,
+    title   = {Consistency Flow Matching: Defining Straight Flows with Velocity Consistency},
+    author  = {Ling Yang and Zixiang Zhang and Zhilong Zhang and Xingchao Liu and Minkai Xu and Wentao Zhang and Chenlin Meng and Stefano Ermon and Bin Cui},
+    journal = {ArXiv},
+    year    = {2024},
+    volume  = {abs/2407.02398},
+    url     = {https://api.semanticscholar.org/CorpusID:270878436}
+}
+```

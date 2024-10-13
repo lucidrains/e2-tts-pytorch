@@ -28,12 +28,12 @@ from torch.nn import Module, ModuleList, Sequential, Linear
 from torch.nn.utils.rnn import pad_sequence
 
 import torchaudio
-from torchaudio.functional import DB_to_amplitude, resample
+from torchaudio.functional import DB_to_amplitude
 from torchdiffeq import odeint
 
 import einx
 from einops.layers.torch import Rearrange
-from einops import einsum, rearrange, repeat, reduce, pack, unpack
+from einops import rearrange, repeat, reduce, pack, unpack
 
 from x_transformers import (
     Attention,
@@ -61,7 +61,11 @@ Float = TorchTyping(jaxtyping.Float)
 Int   = TorchTyping(jaxtyping.Int)
 Bool  = TorchTyping(jaxtyping.Bool)
 
-E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred_flow', 'pred_data'])
+# named tuples
+
+LossBreakdown = namedtuple('LossBreakdown', ['flow', 'velocity_consistency'])
+
+E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred_flow', 'pred_data', 'loss_breakdown'])
 
 # helpers
 
@@ -393,7 +397,6 @@ class InterpolatedCharacterEmbed(Module):
     ) -> Float['b n d']:
 
         device = text.device
-        seq = torch.arange(max_seq_len, device = device)
 
         mask = default(mask, (None,))
 
@@ -895,7 +898,8 @@ class E2TTS(Module):
         ) = 'char_utf8',
         use_vocos = True,
         pretrained_vocos_path = 'charactr/vocos-mel-24khz',
-        sampling_rate: int | None = None
+        sampling_rate: int | None = None,
+        velocity_consistency_weight = 0.,
     ):
         super().__init__()
 
@@ -967,6 +971,11 @@ class E2TTS(Module):
 
         self.embed_text = text_embed_klass(dim_text, num_embeds = text_num_embeds, **char_embed_kwargs)
 
+        # weight for velocity consistency
+
+        self.register_buffer('zero', torch.tensor(0.), persistent = False)
+        self.velocity_consistency_weight = velocity_consistency_weight
+
         # default vocos for mel -> audio
 
         self.vocos = Vocos.from_pretrained(pretrained_vocos_path) if use_vocos else None
@@ -982,7 +991,8 @@ class E2TTS(Module):
         times: Float['b'],
         mask: Bool['b n'] | None = None,
         text: Int['b nt'] | None = None,
-        drop_text_cond: bool | None = None
+        drop_text_cond: bool | None = None,
+        return_drop_text_cond = False
     ):
         seq_len = x.shape[-2]
         drop_text_cond = default(drop_text_cond, self.training and random() < self.cond_drop_prob)
@@ -1015,7 +1025,12 @@ class E2TTS(Module):
             text_embed = text_embed
         )
 
-        return self.to_pred(attended)
+        pred =  self.to_pred(attended)
+
+        if not return_drop_text_cond:
+            return pred
+
+        return pred, drop_text_cond
 
     def cfg_transformer_with_pred_head(
         self,
@@ -1183,7 +1198,11 @@ class E2TTS(Module):
         text: Int['b nt'] | list[str] | None = None,
         times: Int['b'] | None = None,
         lens: Int['b'] | None = None,
+        velocity_consistency_model: E2TTS | None = None,
+        velocity_consistency_delta = 1e-5
     ):
+        need_velocity_loss = exists(velocity_consistency_model) and self.velocity_consistency_weight > 0.
+
         # handle raw wave
 
         if inp.ndim == 2:
@@ -1230,6 +1249,11 @@ class E2TTS(Module):
         times = torch.rand((batch,), dtype = dtype, device = self.device)
         t = rearrange(times, 'b -> b 1 1')
 
+        # if need velocity consistency, make sure time does not exceed 1.
+
+        if need_velocity_loss:
+            t = t * (1. - velocity_consistency_delta)
+
         # sample xt (w in the paper)
 
         w = (1. - t) * x0 + t * x1
@@ -1246,7 +1270,36 @@ class E2TTS(Module):
 
         # transformer and prediction head
 
-        pred = self.transformer_with_pred_head(w, cond, times = times, text = text, mask = mask)
+        pred, did_drop_text_cond = self.transformer_with_pred_head(
+            w,
+            cond,
+            times = times,
+            text = text,
+            mask = mask,
+            return_drop_text_cond = True
+        )
+
+        # maybe velocity consistency loss
+
+        velocity_loss = self.zero
+
+        if need_velocity_loss:
+
+            t_with_delta = t + velocity_consistency_delta
+            w_with_delta = (1. - t_with_delta) * x0 + t_with_delta * x1
+
+            with torch.no_grad():
+                ema_pred = velocity_consistency_model.transformer_with_pred_head(
+                    w_with_delta,
+                    cond,
+                    times = times + velocity_consistency_delta,
+                    text = text,
+                    mask = mask,
+                    drop_text_cond = did_drop_text_cond
+                )
+
+            velocity_loss = F.mse_loss(pred, ema_pred, reduction = 'none')
+            velocity_loss = velocity_loss[rand_span_mask].mean()
 
         # flow matching loss
 
@@ -1254,4 +1307,11 @@ class E2TTS(Module):
 
         loss = loss[rand_span_mask].mean()
 
-        return E2TTSReturn(loss, cond, pred, x0 + pred)
+        # total loss and get breakdown
+
+        total_loss = loss + velocity_loss * self.velocity_consistency_weight
+        breakdown = LossBreakdown(loss, velocity_loss)
+
+        # return total loss and bunch of intermediates
+
+        return E2TTSReturn(total_loss, cond, pred, x0 + pred, breakdown)

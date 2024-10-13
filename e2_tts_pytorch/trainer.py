@@ -160,14 +160,13 @@ class E2Trainer:
 
         self.model = model
 
-        if self.is_main:
-            self.ema_model = EMA(
-                model,
-                include_online_model = False,
-                **ema_kwargs
-            )
+        self.need_velocity_consistent_loss = model.velocity_consistency_weight > 0.
 
-            self.ema_model.to(self.accelerator.device)
+        self.ema_model = EMA(
+            model,
+            include_online_model = False,
+            **ema_kwargs
+        )
 
         self.duration_predictor = duration_predictor
         self.optimizer = optimizer
@@ -175,8 +174,8 @@ class E2Trainer:
         self.checkpoint_path = default(checkpoint_path, 'model.pth')
         self.mel_spectrogram = MelSpec(sampling_rate=self.target_sample_rate)
 
-        self.model, self.optimizer = self.accelerator.prepare(
-            self.model, self.optimizer
+        self.ema_model, self.model, self.optimizer = self.accelerator.prepare(
+            self.ema_model, self.model, self.optimizer
         )
         self.max_grad_norm = max_grad_norm
         
@@ -239,11 +238,21 @@ class E2Trainer:
                     mel_spec = rearrange(batch['mel'], 'b d n -> b n d')
                     mel_lengths = batch["mel_lengths"]
 
-                    if self.duration_predictor is not None:
+                    if exists(self.duration_predictor):
                         dur_loss = self.duration_predictor(mel_spec, lens=batch.get('durations'))
                         self.writer.add_scalar('duration loss', dur_loss.item(), global_step)
 
-                    loss, cond, pred, pred_data = self.model(mel_spec, text=text_inputs, lens=mel_lengths)
+                    velocity_consistency_model = None
+                    if self.need_velocity_consistent_loss and self.ema_model.initted:
+                        velocity_consistency_model = self.ema_model.ema_model
+
+                    loss, cond, pred, pred_data = self.model(
+                        mel_spec,
+                        text=text_inputs,
+                        lens=mel_lengths,
+                        velocity_consistency_model=velocity_consistency_model
+                    )
+
                     self.accelerator.backward(loss)
 
                     if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
@@ -253,8 +262,7 @@ class E2Trainer:
                     self.scheduler.step()
                     self.optimizer.zero_grad()
 
-                if self.is_main:
-                    self.ema_model.update()
+                self.ema_model.update()
 
                 if self.accelerator.is_local_main_process:
                     logger.info(f"step {global_step+1}: loss = {loss.item():.4f}")
