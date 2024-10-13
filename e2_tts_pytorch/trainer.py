@@ -38,7 +38,8 @@ def default(v, d):
 def to_numpy(t):
     return t.detach().cpu().numpy()
 
-# plot spectrogram 
+# plot spectrogram
+
 def plot_spectrogram(spectrogram):
     spectrogram = to_numpy(spectrogram)
     fig, ax = plt.subplots(figsize=(10, 4))

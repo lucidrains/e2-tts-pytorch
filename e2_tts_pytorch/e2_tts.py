@@ -268,6 +268,44 @@ class MelSpec(Module):
         mel = log(mel)
         return mel
 
+# convolutional positional generating module
+# taken from https://github.com/lucidrains/voicebox-pytorch/blob/main/voicebox_pytorch/voicebox_pytorch.py#L203
+
+class DepthwiseConv(Module):
+    def __init__(
+        self,
+        dim,
+        *,
+        kernel_size,
+        groups = None
+    ):
+        super().__init__()
+        assert not divisible_by(kernel_size, 2)
+        groups = default(groups, dim) # full depthwise conv by default
+
+        self.dw_conv1d = nn.Sequential(
+            nn.Conv1d(dim, dim, kernel_size, groups = groups, padding = kernel_size // 2),
+            nn.SiLU()
+        )
+
+    def forward(
+        self,
+        x,
+        mask = None
+    ):
+
+        if exists(mask):
+            x = einx.where('b n, b n d, -> b n d', mask, x, 0.)
+
+        x = rearrange(x, 'b n c -> b c n')
+        x = self.dw_conv1d(x)
+        out = rearrange(x, 'b c n -> b n c')
+
+        if exists(mask):
+            out = einx.where('b n, b n d, -> b n d', mask, out, 0.)
+
+        return out
+
 # adaln zero from DiT paper
 
 class AdaLNZero(Module):
@@ -453,6 +491,7 @@ class Transformer(Module):
         cond_on_time = True,
         abs_pos_emb = True,
         max_seq_len = 8192,
+        kernel_size = 31,
         dropout = 0.1,
         num_registers = 32,
         attn_kwargs: dict = dict(
@@ -520,6 +559,8 @@ class Transformer(Module):
 
             # speech related
 
+            speech_conv = DepthwiseConv(dim, kernel_size = kernel_size)
+
             attn_norm = rmsnorm_klass(dim)
             attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
             attn_adaln_zero = postbranch_klass()
@@ -532,6 +573,7 @@ class Transformer(Module):
 
             speech_modules = ModuleList([
                 skip_proj,
+                speech_conv,
                 attn_norm,
                 attn,
                 attn_adaln_zero,
@@ -544,6 +586,8 @@ class Transformer(Module):
 
             if has_text:
                 # text related
+
+                text_conv = DepthwiseConv(dim_text, kernel_size = kernel_size)
 
                 text_attn_norm = RMSNorm(dim_text)
                 text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
@@ -558,6 +602,7 @@ class Transformer(Module):
                 cross_condition = TextAudioCrossCondition(dim = dim, dim_text = dim_text, cond_audio_to_text = not is_last)
 
                 text_modules = ModuleList([
+                    text_conv,
                     text_attn_norm,
                     text_attn,
                     text_ff_norm,
@@ -632,6 +677,7 @@ class Transformer(Module):
 
             (
                 maybe_skip_proj,
+                speech_conv,
                 attn_norm,
                 attn,
                 maybe_attn_adaln_zero,
@@ -645,12 +691,15 @@ class Transformer(Module):
             if exists(text_embed) and exists(text_modules):
 
                 (
+                    text_conv,
                     text_attn_norm,
                     text_attn,
                     text_ff_norm,
                     text_ff,
                     cross_condition
                 ) = text_modules
+
+                text_embed = text_conv(text_embed, mask = mask) + text_embed
 
                 text_embed = text_attn(text_attn_norm(text_embed), rotary_pos_emb = text_rotary_pos_emb, mask = mask) + text_embed
 
@@ -670,6 +719,10 @@ class Transformer(Module):
                 skip = skips.pop()
                 x = torch.cat((x, skip), dim = -1)
                 x = maybe_skip_proj(x)
+
+            # position generating convolution
+
+            x = speech_conv(x, mask = mask) + x
 
             # attention and feedforward blocks
 

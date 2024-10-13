@@ -113,3 +113,14 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:273098845}
 }
 ```
+
+```bibtex
+@article{Gulati2020ConformerCT,
+    title   = {Conformer: Convolution-augmented Transformer for Speech Recognition},
+    author  = {Anmol Gulati and James Qin and Chung-Cheng Chiu and Niki Parmar and Yu Zhang and Jiahui Yu and Wei Han and Shibo Wang and Zhengdong Zhang and Yonghui Wu and Ruoming Pang},
+    journal = {ArXiv},
+    year    = {2020},
+    volume  = {abs/2005.08100},
+    url     = {https://api.semanticscholar.org/CorpusID:218674528}
+}
+```
