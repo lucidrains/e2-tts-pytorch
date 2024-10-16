@@ -135,3 +135,14 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:270878436}
 }
 ```
+
+```bibtex
+@article{Li2024SwitchEA,
+    title   = {Switch EMA: A Free Lunch for Better Flatness and Sharpness},
+    author  = {Siyuan Li and Zicheng Liu and Juanxi Tian and Ge Wang and Zedong Wang and Weiyang Jin and Di Wu and Cheng Tan and Tao Lin and Yang Liu and Baigui Sun and Stan Z. Li},
+    journal = {ArXiv},
+    year    = {2024},
+    volume  = {abs/2402.09240},
+    url     = {https://api.semanticscholar.org/CorpusID:267657558}
+}
+```

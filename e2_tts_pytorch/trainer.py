@@ -143,7 +143,8 @@ class E2Trainer:
         sample_rate = 22050,
         tensorboard_log_dir = 'runs/e2_tts_experiment',
         accelerate_kwargs: dict = dict(),
-        ema_kwargs: dict = dict()
+        ema_kwargs: dict = dict(),
+        use_switch_ema = False
     ):
         logger.add(log_file)
 
@@ -167,6 +168,8 @@ class E2Trainer:
             include_online_model = False,
             **ema_kwargs
         )
+
+        self.use_switch_ema = use_switch_ema
 
         self.duration_predictor = duration_predictor
         self.optimizer = optimizer
@@ -283,5 +286,8 @@ class E2Trainer:
             if self.accelerator.is_local_main_process:
                 logger.info(f"epoch {epoch+1}/{epochs} - average loss = {epoch_loss:.4f}")
                 self.writer.add_scalar('epoch average loss', epoch_loss, epoch)
-        
+
+        if self.use_switch_ema:
+            self.ema_model.update_model_with_ema()
+
         self.writer.close()
