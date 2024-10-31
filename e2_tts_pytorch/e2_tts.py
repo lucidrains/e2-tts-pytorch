@@ -673,6 +673,11 @@ class Transformer(Module):
 
         skips = []
 
+        # value residual
+
+        text_attn_first_values = None
+        attn_first_values = None
+
         # go through the layers
 
         for ind, (speech_modules, text_modules) in enumerate(self.layers):
@@ -704,7 +709,10 @@ class Transformer(Module):
 
                 text_embed = text_conv(text_embed, mask = mask) + text_embed
 
-                text_embed = text_attn(text_attn_norm(text_embed), rotary_pos_emb = text_rotary_pos_emb, mask = mask) + text_embed
+                text_attn_out, text_attn_inter = text_attn(text_attn_norm(text_embed), rotary_pos_emb = text_rotary_pos_emb, mask = mask, return_intermediates = True, value_residual = text_attn_first_values)
+                text_embed = text_attn_out + text_embed
+
+                text_attn_first_values = default(text_attn_first_values, text_attn_inter.values)
 
                 text_embed = text_ff(text_ff_norm(text_embed)) + text_embed
 
@@ -729,7 +737,9 @@ class Transformer(Module):
 
             # attention and feedforward blocks
 
-            attn_out = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb = rotary_pos_emb, mask = mask)
+            attn_out, attn_inter = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb = rotary_pos_emb, mask = mask, return_intermediates = True, value_residual = attn_first_values)
+
+            attn_first_values = default(attn_first_values, attn_inter.values)
 
             x = x + maybe_attn_adaln_zero(attn_out, **norm_kwargs)
 

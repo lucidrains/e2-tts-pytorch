@@ -1,6 +1,6 @@
 [project]
 name = "e2-tts-pytorch"
-version = "1.2.4"
+version = "1.4.0"
 description = "E2-TTS in Pytorch"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -32,13 +32,14 @@ dependencies = [
     'g2p-en',
     'jaxtyping',
     'loguru',
+    'pydantic<2',
     'tensorboard',
     'torch>=2.0',
     'torchdiffeq',
     'torchaudio>=2.3.1',
     'tqdm>=4.65.0',
     'vocos',
-    'x-transformers>=1.31.14',
+    'x-transformers>=1.42.3',
 ]
 
 [project.urls]
