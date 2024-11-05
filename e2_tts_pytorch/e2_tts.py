@@ -63,7 +63,7 @@ Bool  = TorchTyping(jaxtyping.Bool)
 
 # named tuples
 
-LossBreakdown = namedtuple('LossBreakdown', ['flow', 'velocity_consistency'])
+LossBreakdown = namedtuple('LossBreakdown', ['flow', 'velocity_consistency', 'direction'])
 
 E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred_flow', 'pred_data', 'loss_breakdown'])
 
@@ -909,7 +909,9 @@ class E2TTS(Module):
         use_vocos = True,
         pretrained_vocos_path = 'charactr/vocos-mel-24khz',
         sampling_rate: int | None = None,
+        add_direction_loss = False,
         velocity_consistency_weight = 0.,
+        direction_loss_weight = 1.
     ):
         super().__init__()
 
@@ -985,6 +987,11 @@ class E2TTS(Module):
 
         self.register_buffer('zero', torch.tensor(0.), persistent = False)
         self.velocity_consistency_weight = velocity_consistency_weight
+
+        # direction loss for flow matching
+
+        self.add_direction_loss = add_direction_loss
+        self.direction_loss_weight = direction_loss_weight
 
         # default vocos for mel -> audio
 
@@ -1317,10 +1324,22 @@ class E2TTS(Module):
 
         loss = loss[rand_span_mask].mean()
 
+        # maybe direction loss
+
+        direction_loss = self.zero
+
+        if self.add_direction_loss:
+            direction_loss = ((1. - F.cosine_similarity(pred, flow, dim = 1)) / 2).mean() # make direction loss at most 1.
+
         # total loss and get breakdown
 
-        total_loss = loss + velocity_loss * self.velocity_consistency_weight
-        breakdown = LossBreakdown(loss, velocity_loss)
+        total_loss = (
+            loss +
+            direction_loss * self.direction_loss_weight +
+            velocity_loss * self.velocity_consistency_weight
+        )
+
+        breakdown = LossBreakdown(loss, velocity_loss, direction_loss)
 
         # return total loss and bunch of intermediates
 
