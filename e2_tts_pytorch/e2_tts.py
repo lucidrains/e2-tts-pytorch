@@ -63,7 +63,7 @@ Bool  = TorchTyping(jaxtyping.Bool)
 
 # named tuples
 
-LossBreakdown = namedtuple('LossBreakdown', ['flow', 'velocity_consistency', 'direction'])
+LossBreakdown = namedtuple('LossBreakdown', ['flow', 'velocity_consistency'])
 
 E2TTSReturn = namedtuple('E2TTS', ['loss', 'cond', 'pred_flow', 'pred_data', 'loss_breakdown'])
 
@@ -108,12 +108,6 @@ def project(x, y):
     orthogonal = x - parallel
 
     return inverse(parallel).to(dtype), inverse(orthogonal).to(dtype)
-
-# losses
-
-def calc_direction_loss(pred, target):
-     # make direction loss at most 1.
-    return 0.5 * (1. - einsum(l2norm(pred), l2norm(target), '... d, ... d -> ...'))
 
 # simple utf-8 tokenizer, since paper went character based
 
@@ -918,9 +912,7 @@ class E2TTS(Module):
         use_vocos = True,
         pretrained_vocos_path = 'charactr/vocos-mel-24khz',
         sampling_rate: int | None = None,
-        add_direction_loss = False,
         velocity_consistency_weight = 0.,
-        direction_loss_weight = 1.
     ):
         super().__init__()
 
@@ -996,11 +988,6 @@ class E2TTS(Module):
 
         self.register_buffer('zero', torch.tensor(0.), persistent = False)
         self.velocity_consistency_weight = velocity_consistency_weight
-
-        # direction loss for flow matching
-
-        self.add_direction_loss = add_direction_loss
-        self.direction_loss_weight = direction_loss_weight
 
         # default vocos for mel -> audio
 
@@ -1333,24 +1320,14 @@ class E2TTS(Module):
 
         loss = loss[rand_span_mask].mean()
 
-        # maybe direction loss
-
-        direction_loss = self.zero
-
-        if self.add_direction_loss:
-            direction_loss = calc_direction_loss(pred, flow)
-
-            direction_loss = direction_loss[rand_span_mask].mean()
-
         # total loss and get breakdown
 
         total_loss = (
             loss +
-            direction_loss * self.direction_loss_weight +
             velocity_loss * self.velocity_consistency_weight
         )
 
-        breakdown = LossBreakdown(loss, velocity_loss, direction_loss)
+        breakdown = LossBreakdown(loss, velocity_loss)
 
         # return total loss and bunch of intermediates
 
