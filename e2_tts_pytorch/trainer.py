@@ -8,6 +8,7 @@ import matplotlib.pylab as plt
 
 import torch
 import torch.nn.functional as F
+from torch.optim import Optimizer
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from torch.optim.lr_scheduler import LinearLR, SequentialLR
@@ -18,6 +19,8 @@ from einops import rearrange
 
 from accelerate import Accelerator
 from accelerate.utils import DistributedDataParallelKwargs
+
+from adam_atan2_pytorch.adopt import Adopt
 
 from ema_pytorch import EMA
 
@@ -133,9 +136,10 @@ class E2Trainer:
     def __init__(
         self,
         model: E2TTS,
-        optimizer,
-        num_warmup_steps=20000,
-        grad_accumulation_steps=1,
+        optimizer: Optimizer | None = None,
+        learning_rate = 7.5e-5,
+        num_warmup_steps = 20000,
+        grad_accumulation_steps = 1,
         duration_predictor: DurationPredictor | None = None,
         checkpoint_path = None,
         log_file = "logs.txt",
@@ -172,9 +176,15 @@ class E2Trainer:
         self.use_switch_ema = use_switch_ema
 
         self.duration_predictor = duration_predictor
+
+        # optimizer
+
+        if not exists(optimizer):
+            optimizer = Adopt(model.parameters(), lr = learning_rate)
+
         self.optimizer = optimizer
+
         self.num_warmup_steps = num_warmup_steps
-        self.checkpoint_path = default(checkpoint_path, 'model.pth')
         self.mel_spectrogram = MelSpec(sampling_rate=self.target_sample_rate)
 
         self.ema_model, self.model, self.optimizer = self.accelerator.prepare(
@@ -182,6 +192,7 @@ class E2Trainer:
         )
         self.max_grad_norm = max_grad_norm
         
+        self.checkpoint_path = default(checkpoint_path, 'model.pth')
         self.writer = SummaryWriter(log_dir=tensorboard_log_dir)
 
     @property

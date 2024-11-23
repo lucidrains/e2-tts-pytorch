@@ -1,7 +1,6 @@
 import torch
 from e2_tts_pytorch import E2TTS, DurationPredictor
 
-from torch.optim import Adam
 from datasets import load_dataset
 
 from e2_tts_pytorch.trainer import (
@@ -25,8 +24,6 @@ e2tts = E2TTS(
 )
 
 train_dataset = HFDataset(load_dataset("MushanW/GLOBE")["train"])
-
-optimizer = Adam(e2tts.parameters(), lr=7.5e-5)
 
 trainer = E2Trainer(
     e2tts,

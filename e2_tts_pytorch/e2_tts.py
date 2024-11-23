@@ -560,6 +560,8 @@ class Transformer(Module):
             )
 
         for ind in range(depth):
+            is_first_block = ind == 0
+
             is_later_half = ind >= (depth // 2)
             has_text = ind < text_depth
 
@@ -596,7 +598,7 @@ class Transformer(Module):
                 text_conv = DepthwiseConv(dim_text, kernel_size = kernel_size)
 
                 text_attn_norm = RMSNorm(dim_text)
-                text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, **attn_kwargs)
+                text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, learned_value_residual_mix = not is_first_block, **attn_kwargs)
 
                 text_ff_norm = RMSNorm(dim_text)
                 text_ff = FeedForward(dim = dim_text, glu = True, mult = text_ff_mult, dropout = dropout, **ff_kwargs)
