@@ -500,6 +500,7 @@ class Transformer(Module):
         kernel_size = 31,
         dropout = 0.1,
         num_registers = 32,
+        attn_laser = False,
         attn_kwargs: dict = dict(
             gate_value_heads = True,
             softclamp_logits = True,
@@ -570,7 +571,7 @@ class Transformer(Module):
             speech_conv = DepthwiseConv(dim, kernel_size = kernel_size)
 
             attn_norm = rmsnorm_klass(dim)
-            attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, **attn_kwargs)
+            attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, learned_value_residual_mix = not is_first_block, laser = attn_laser, **attn_kwargs)
             attn_adaln_zero = postbranch_klass()
 
             ff_norm = rmsnorm_klass(dim)
@@ -598,7 +599,7 @@ class Transformer(Module):
                 text_conv = DepthwiseConv(dim_text, kernel_size = kernel_size)
 
                 text_attn_norm = RMSNorm(dim_text)
-                text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, learned_value_residual_mix = not is_first_block, **attn_kwargs)
+                text_attn = Attention(dim = dim_text, heads = text_heads, dim_head = text_dim_head, dropout = dropout, learned_value_residual_mix = not is_first_block, laser = attn_laser, **attn_kwargs)
 
                 text_ff_norm = RMSNorm(dim_text)
                 text_ff = FeedForward(dim = dim_text, glu = True, mult = text_ff_mult, dropout = dropout, **ff_kwargs)
