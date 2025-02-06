@@ -46,6 +46,8 @@ from x_transformers.x_transformers import RotaryEmbedding
 
 from hyper_connections import HyperConnections
 
+from hl_gauss_pytorch import HLGaussLayer
+
 from vocos import Vocos
 
 pad_sequence = partial(pad_sequence, batch_first = True)
@@ -839,6 +841,8 @@ class DurationPredictor(Module):
         mel_spec_kwargs: dict = dict(),
         char_embed_kwargs: dict = dict(),
         text_num_embeds = None,
+        hl_gauss_loss: dict | None = None,
+        use_regression = True,
         tokenizer: (
             Literal['char_utf8', 'phoneme_en'] |
             Callable[[list[str]], Int['b nt']]
@@ -882,11 +886,13 @@ class DurationPredictor(Module):
         self.embed_text = CharacterEmbed(dim_text, num_embeds = text_num_embeds, **char_embed_kwargs)
 
         # to prediction
+        # applying https://arxiv.org/abs/2403.03950
 
-        self.to_pred = Sequential(
-            Linear(dim, 1, bias = False),
-            nn.Softplus(),
-            Rearrange('... 1 -> ...')
+        self.hl_gauss_layer = HLGaussLayer(
+            dim,
+            hl_gauss_loss = hl_gauss_loss,
+            use_regression = use_regression,
+            regress_activation = nn.Softplus()
         )
 
     def forward(
@@ -937,24 +943,24 @@ class DurationPredictor(Module):
 
         # attending
 
-        x = self.transformer(
+        embed = self.transformer(
             x,
             mask = mask,
             text_embed = text_embed,
         )
 
-        x = maybe_masked_mean(x, mask)
-
-        pred = self.to_pred(x)
+        pooled_embed = maybe_masked_mean(embed, mask)
 
         # return the prediction if not returning loss
 
         if not return_loss:
-            return pred
+            return self.hl_gauss_layer(pooled_embed)
 
         # loss
 
-        return F.mse_loss(pred, lens.float())
+        loss = self.hl_gauss_layer(pooled_embed, lens.float())
+
+        return loss
 
 class E2TTS(Module):
 
