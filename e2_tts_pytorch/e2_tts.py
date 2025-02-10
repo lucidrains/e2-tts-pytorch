@@ -2,6 +2,7 @@
 ein notation:
 b - batch
 n - sequence
+f - frequency token dimension
 nt - text sequence
 nw - raw wave length
 d - dimension
@@ -32,7 +33,7 @@ from torchaudio.functional import DB_to_amplitude
 from torchdiffeq import odeint
 
 import einx
-from einops.layers.torch import Rearrange
+from einops.layers.torch import Rearrange, Reduce
 from einops import rearrange, repeat, reduce, einsum, pack, unpack
 
 from x_transformers import (
@@ -78,6 +79,15 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+def xnor(x, y):
+    return not (x ^ y)
+
+def set_if_missing_key(d, key, value):
+    if key in d:
+        return
+
+    d.update(**{key: value})
 
 def l2norm(t):
     return F.normalize(t, dim = -1)
@@ -498,6 +508,9 @@ class Transformer(Module):
         text_heads = None,
         text_dim_head = None,
         text_ff_mult = None,
+        has_freq_axis = False,
+        freq_heads = None,
+        freq_dim_head = None,
         cond_on_time = True,
         abs_pos_emb = True,
         max_seq_len = 8192,
@@ -524,6 +537,8 @@ class Transformer(Module):
 
         self.dim = dim
 
+        # determine text related hparams
+
         dim_text = default(dim_text, dim // 2)
         self.dim_text = dim_text
 
@@ -533,6 +548,15 @@ class Transformer(Module):
         text_depth = default(text_depth, depth)
 
         assert 1 <= text_depth <= depth, 'must have at least 1 layer of text conditioning, but less than total number of speech layers'
+
+        # determine maybe freq axis hparams
+
+        freq_heads = default(freq_heads, heads)
+        freq_dim_head = default(freq_dim_head, dim_head)
+
+        self.has_freq_axis = has_freq_axis
+
+        # layers
 
         self.depth = depth
         layers = []
@@ -546,14 +570,13 @@ class Transformer(Module):
         self.text_registers = nn.Parameter(torch.zeros(num_registers, dim_text))
         nn.init.normal_(self.text_registers, std = 0.02)
 
-        # maybe residual scales
-
-        residual_scales = []
-
         # rotary embedding
 
         self.rotary_emb = RotaryEmbedding(dim_head)
-        self.text_rotary_emb = RotaryEmbedding(dim_head)
+        self.text_rotary_emb = RotaryEmbedding(text_dim_head)
+
+        if has_freq_axis:
+            self.freq_rotary_emb = RotaryEmbedding(freq_dim_head)
 
         # hyper connection related
 
@@ -597,6 +620,13 @@ class Transformer(Module):
 
             skip_proj = Linear(dim * 2, dim, bias = False) if is_later_half else None
 
+            freq_attn_norm = freq_attn = freq_attn_adaln_zero = None
+
+            if has_freq_axis:
+                freq_attn_norm = rmsnorm_klass(dim)
+                freq_attn = Attention(dim = dim, heads = freq_heads, dim_head = freq_dim_head)
+                freq_attn_adaln_zero = postbranch_klass()
+
             speech_modules = ModuleList([
                 skip_proj,
                 speech_conv,
@@ -606,12 +636,16 @@ class Transformer(Module):
                 ff_norm,
                 ff,
                 ff_adaln_zero,
+                freq_attn_norm,
+                freq_attn,
+                freq_attn_adaln_zero
             ])
 
             speech_hyper_conns = ModuleList([
                 init_hyper_conn(dim = dim), # conv
                 init_hyper_conn(dim = dim), # attn
                 init_hyper_conn(dim = dim), # ff
+                init_hyper_conn(dim = dim) if has_freq_axis else None
             ])
 
             text_modules = None
@@ -667,12 +701,28 @@ class Transformer(Module):
 
     def forward(
         self,
-        x: Float['b n d'],
+        x: Float['b n d'] | Float['b f n d'],
         times: Float['b'] | Float[''] | None = None,
         mask: Bool['b n'] | None = None,
         text_embed: Float['b n dt'] | None = None,
     ):
-        batch, seq_len, device = *x.shape[:2], x.device
+        orig_batch = x.shape[0]
+
+        assert xnor(x.ndim == 4, self.has_freq_axis), '`has_freq_axis` must be set if passing in tensor with frequency dimension (4 ndims), and not set if passing in only 3'
+
+        freq_seq_len = 1
+
+        if self.has_freq_axis:
+            freq_seq_len = x.shape[1]
+            x = rearrange(x, 'b f n d -> (b f) n d')
+
+            if exists(text_embed):
+                text_embed = repeat(text_embed, 'b ... -> (b f) ...', f = freq_seq_len)
+
+            if exists(mask):
+                mask = repeat(mask, 'b ... -> (b f) ...', f = freq_seq_len)
+
+        batch, seq_len, device = x.shape[0], x.shape[1], x.device
 
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
 
@@ -683,17 +733,6 @@ class Transformer(Module):
             seq = torch.arange(seq_len, device = device)
             x = x + self.abs_pos_emb(seq)
 
-        # handle adaptive rmsnorm kwargs
-
-        norm_kwargs = dict()
-
-        if exists(times):
-            if times.ndim == 0:
-                times = repeat(times, ' -> b', b = batch)
-
-            times = self.time_cond_mlp(times)
-            norm_kwargs.update(condition = times)
-
         # register tokens
 
         registers = repeat(self.registers, 'r d -> b r d', b = batch)
@@ -701,6 +740,24 @@ class Transformer(Module):
 
         if exists(mask):
             mask = F.pad(mask, (self.num_registers, 0), value = True)
+
+        # handle adaptive rmsnorm kwargs
+
+        norm_kwargs = dict()
+        freq_norm_kwargs = dict()
+
+        if exists(times):
+            if times.ndim == 0:
+                times = repeat(times, ' -> b', b = orig_batch)
+
+            times = self.time_cond_mlp(times)
+
+            if self.has_freq_axis:
+                freq_times = repeat(times, 'b ... -> (b n) ...', n = x.shape[-2])
+                freq_norm_kwargs.update(condition = freq_times)
+
+            times = repeat(times, 'b ... -> (b f) ...', f = freq_seq_len)
+            norm_kwargs.update(condition = times)
 
         # rotary embedding
 
@@ -714,6 +771,9 @@ class Transformer(Module):
             text_registers = repeat(self.text_registers, 'r d -> b r d', b = batch)
             text_embed, _ = pack((text_registers, text_embed), 'b * d')
 
+        if self.has_freq_axis:
+            freq_rotary_pos_emb = self.freq_rotary_emb.forward_from_seq_len(freq_seq_len)
+
         # skip connection related stuff
 
         skips = []
@@ -721,6 +781,7 @@ class Transformer(Module):
         # value residual
 
         text_attn_first_values = None
+        freq_attn_first_values = None
         attn_first_values = None
 
         # expand hyper connections
@@ -744,13 +805,17 @@ class Transformer(Module):
                 maybe_attn_adaln_zero,
                 ff_norm,
                 ff,
-                maybe_ff_adaln_zero
+                maybe_ff_adaln_zero,
+                maybe_freq_attn_norm,
+                maybe_freq_attn,
+                maybe_freq_attn_adaln_zero
             ) = speech_modules
 
             (
                 conv_residual,
                 attn_residual,
-                ff_residual
+                ff_residual,
+                maybe_freq_attn_residual
             ) = speech_residual_fns
 
             # smaller text transformer
@@ -806,7 +871,7 @@ class Transformer(Module):
             x = speech_conv(x, mask = mask)
             x = add_residual(x)
 
-            # attention and feedforward blocks
+            # attention
 
             x, add_residual = attn_residual(x)
             attn_out, attn_inter = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb = rotary_pos_emb, mask = mask, return_intermediates = True, value_residual = attn_first_values)
@@ -814,6 +879,24 @@ class Transformer(Module):
             x = add_residual(attn_out)
 
             attn_first_values = default(attn_first_values, attn_inter.values)
+
+            # attention across frequency tokens, if needed
+
+            if self.has_freq_axis:
+
+                x, add_residual = maybe_freq_attn_residual(x)
+
+                x = rearrange(x, '(b f) n d -> (b n) f d', b = orig_batch)
+
+                attn_out, attn_inter = maybe_freq_attn(maybe_freq_attn_norm(x, **freq_norm_kwargs), rotary_pos_emb = freq_rotary_pos_emb, return_intermediates = True, value_residual = freq_attn_first_values)
+                attn_out = maybe_freq_attn_adaln_zero(attn_out, **freq_norm_kwargs)
+
+                attn_out = rearrange(attn_out, '(b n) f d -> (b f) n d', b = orig_batch)
+
+                x = add_residual(attn_out)
+                freq_attn_first_values = default(freq_attn_first_values, attn_inter.values)
+
+            # feedforward
 
             x, add_residual = ff_residual(x)
             ff_out = ff(ff_norm(x, **norm_kwargs))
@@ -828,6 +911,9 @@ class Transformer(Module):
 
         x = self.hyper_conn_reduce(x)
 
+        if self.has_freq_axis:
+            x = rearrange(x, '(b f) n d -> b f n d', f = freq_seq_len)
+
         return self.final_norm(x)
 
 # main classes
@@ -841,6 +927,7 @@ class DurationPredictor(Module):
         mel_spec_kwargs: dict = dict(),
         char_embed_kwargs: dict = dict(),
         text_num_embeds = None,
+        num_freq_tokens = 1,
         hl_gauss_loss: dict | None = None,
         use_regression = True,
         tokenizer: (
@@ -850,11 +937,21 @@ class DurationPredictor(Module):
     ):
         super().__init__()
 
+        # freq axis hparams
+
+        assert num_freq_tokens > 0
+        self.num_freq_tokens = num_freq_tokens
+        self.has_freq_axis = num_freq_tokens > 1
+
         if isinstance(transformer, dict):
+            set_if_missing_key(transformer, 'has_freq_axis', self.has_freq_axis)
+
             transformer = Transformer(
                 **transformer,
                 cond_on_time = False
             )
+
+        assert transformer.has_freq_axis == self.has_freq_axis
 
         # mel spec
 
@@ -868,7 +965,15 @@ class DurationPredictor(Module):
 
         self.dim = dim
 
-        self.proj_in = Linear(self.num_channels, self.dim)
+        # projecting depends on whether frequency axis is needed
+
+        if not self.has_freq_axis:
+            self.proj_in = Linear(self.num_channels, self.dim)
+        else:
+            self.proj_in = nn.Sequential(
+                Linear(self.num_channels, self.dim * num_freq_tokens),
+                Rearrange('b n (f d) -> b f n d', f = num_freq_tokens)
+            )
 
         # tokenizer and text embed
 
@@ -884,6 +989,10 @@ class DurationPredictor(Module):
             raise ValueError(f'unknown tokenizer string {tokenizer}')
 
         self.embed_text = CharacterEmbed(dim_text, num_embeds = text_num_embeds, **char_embed_kwargs)
+
+        # maybe reduce frequencies
+
+        self.maybe_reduce_freq_axis = Reduce('b f n d -> b n d', 'mean') if self.has_freq_axis else nn.Identity()
 
         # to prediction
         # applying https://arxiv.org/abs/2403.03950
@@ -912,7 +1021,7 @@ class DurationPredictor(Module):
 
         x = self.proj_in(x)
 
-        batch, seq_len, device = *x.shape[:2], x.device
+        batch, seq_len, device = x.shape[0], x.shape[-2], x.device
 
         # text
 
@@ -949,6 +1058,12 @@ class DurationPredictor(Module):
             text_embed = text_embed,
         )
 
+        # maybe reduce freq
+
+        embed = self.maybe_reduce_freq_axis(embed)
+
+        # masked mean
+
         pooled_embed = maybe_masked_mean(embed, mask)
 
         # return the prediction if not returning loss
@@ -977,6 +1092,7 @@ class E2TTS(Module):
         cond_drop_prob = 0.25,
         num_channels = None,
         mel_spec_module: Module | None = None,
+        num_freq_tokens = 1,
         char_embed_kwargs: dict = dict(),
         mel_spec_kwargs: dict = dict(),
         frac_lengths_mask: tuple[float, float] = (0.7, 1.),
@@ -994,16 +1110,31 @@ class E2TTS(Module):
     ):
         super().__init__()
 
+        # freq axis hparams
+
+        assert num_freq_tokens > 0
+        self.num_freq_tokens = num_freq_tokens
+        self.has_freq_axis = num_freq_tokens > 1
+
+        # set transformer
+
         if isinstance(transformer, dict):
+            set_if_missing_key(transformer, 'has_freq_axis', self.has_freq_axis)
+
             transformer = Transformer(
                 **transformer,
                 cond_on_time = True
             )
 
+        assert transformer.has_freq_axis == self.has_freq_axis
+        self.transformer = transformer
+
+        # duration predictor
+
         if isinstance(duration_predictor, dict):
             duration_predictor = DurationPredictor(**duration_predictor)
 
-        self.transformer = transformer
+        # hparams
 
         dim = transformer.dim
         dim_text = transformer.dim_text
@@ -1032,10 +1163,16 @@ class E2TTS(Module):
         self.concat_cond = concat_cond
 
         if concat_cond:
-            self.proj_in = nn.Linear(num_channels * 2, dim)
+            self.proj_in = nn.Linear(num_channels * 2, dim * num_freq_tokens)
         else:
-            self.proj_in = nn.Linear(num_channels, dim)
-            self.cond_proj_in = nn.Linear(num_channels, dim)
+            self.proj_in = nn.Linear(num_channels, dim * num_freq_tokens)
+            self.cond_proj_in = nn.Linear(num_channels, dim * num_freq_tokens)
+
+        # maybe split out frequency
+
+        self.maybe_split_freq = Rearrange('b n (f d) -> b f n d', f = num_freq_tokens) if self.has_freq_axis else nn.Identity()
+
+        self.maybe_reduce_freq = Reduce('b f n d -> b n d', 'mean') if self.has_freq_axis else nn.Identity()
 
         # to prediction
 
@@ -1064,7 +1201,7 @@ class E2TTS(Module):
 
         # weight for velocity consistency
 
-        self.register_buffer('zero', torch.tensor(0.), persistent = False)
+        self.register_buffer('zero', tensor(0.), persistent = False)
         self.velocity_consistency_weight = velocity_consistency_weight
 
         # default vocos for mel -> audio
@@ -1093,12 +1230,15 @@ class E2TTS(Module):
             x = torch.cat((cond, x), dim = -1)
 
         x = self.proj_in(x)
+        x = self.maybe_split_freq(x)
 
         if not self.concat_cond:
             # an alternative is to simply sum the condition
             # seems to work fine
 
             cond = self.cond_proj_in(cond)
+            cond = self.maybe_split_freq(cond)
+
             x = x + cond
 
         # whether to use a text embedding
@@ -1109,14 +1249,16 @@ class E2TTS(Module):
 
         # attend
 
-        attended = self.transformer(
+        embed = self.transformer(
             x,
             times = times,
             mask = mask,
             text_embed = text_embed
         )
 
-        pred =  self.to_pred(attended)
+        embed = self.maybe_reduce_freq(embed)
+
+        pred = self.to_pred(embed)
 
         if not return_drop_text_cond:
             return pred

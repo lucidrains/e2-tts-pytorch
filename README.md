@@ -175,3 +175,12 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:272987528}
 }
 ```
+
+```bibtex
+@inproceedings{Lu2023MusicSS,
+    title   = {Music Source Separation with Band-Split RoPE Transformer},
+    author  = {Wei-Tsung Lu and Ju-Chiang Wang and Qiuqiang Kong and Yun-Ning Hung},
+    year    = {2023},
+    url     = {https://api.semanticscholar.org/CorpusID:261556702}
+}
+```
