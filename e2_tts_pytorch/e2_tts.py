@@ -2,6 +2,7 @@
 ein notation:
 b - batch
 n - sequence
+f - frequency token dimension
 nt - text sequence
 nw - raw wave length
 d - dimension
@@ -78,6 +79,9 @@ def exists(v):
 
 def default(v, d):
     return v if exists(v) else d
+
+def xnor(x, y):
+    return not (x ^ y)
 
 def set_if_missing_key(d, key, value):
     if key in d:
@@ -697,12 +701,28 @@ class Transformer(Module):
 
     def forward(
         self,
-        x: Float['b n d'],
+        x: Float['b n d'] | Float['b f n d'],
         times: Float['b'] | Float[''] | None = None,
         mask: Bool['b n'] | None = None,
         text_embed: Float['b n dt'] | None = None,
     ):
-        batch, seq_len, device = x.shape[0], x.shape[-2], x.device
+        orig_batch = x.shape[0]
+
+        assert xnor(x.ndim == 4, self.has_freq_axis), '`has_freq_axis` must be set if passing in tensor with frequency dimension (4 ndims), and not set if passing in only 3'
+
+        freq_seq_len = 1
+
+        if self.has_freq_axis:
+            freq_seq_len = x.shape[1]
+            x = rearrange(x, 'b f n d -> (b f) n d')
+
+            if exists(text_embed):
+                text_embed = repeat(text_embed, 'b ... -> (b f) ...', f = freq_seq_len)
+
+            if exists(mask):
+                mask = repeat(mask, 'b ... -> (b f) ...', f = freq_seq_len)
+
+        batch, seq_len, device = x.shape[0], x.shape[1], x.device
 
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
 
@@ -713,17 +733,6 @@ class Transformer(Module):
             seq = torch.arange(seq_len, device = device)
             x = x + self.abs_pos_emb(seq)
 
-        # handle adaptive rmsnorm kwargs
-
-        norm_kwargs = dict()
-
-        if exists(times):
-            if times.ndim == 0:
-                times = repeat(times, ' -> b', b = batch)
-
-            times = self.time_cond_mlp(times)
-            norm_kwargs.update(condition = times)
-
         # register tokens
 
         registers = repeat(self.registers, 'r d -> b r d', b = batch)
@@ -731,6 +740,24 @@ class Transformer(Module):
 
         if exists(mask):
             mask = F.pad(mask, (self.num_registers, 0), value = True)
+
+        # handle adaptive rmsnorm kwargs
+
+        norm_kwargs = dict()
+        freq_norm_kwargs = dict()
+
+        if exists(times):
+            if times.ndim == 0:
+                times = repeat(times, ' -> b', b = orig_batch)
+
+            times = self.time_cond_mlp(times)
+
+            if self.has_freq_axis:
+                freq_times = repeat(times, 'b ... -> (b n) ...', n = x.shape[-2])
+                freq_norm_kwargs.update(condition = freq_times)
+
+            times = repeat(times, 'b ... -> (b f) ...', f = freq_seq_len)
+            norm_kwargs.update(condition = times)
 
         # rotary embedding
 
@@ -745,7 +772,7 @@ class Transformer(Module):
             text_embed, _ = pack((text_registers, text_embed), 'b * d')
 
         if self.has_freq_axis:
-            freq_rotary_pos_emb = self.freq_rotary_emb.forward_from_seq_len(x.shape[-3])
+            freq_rotary_pos_emb = self.freq_rotary_emb.forward_from_seq_len(freq_seq_len)
 
         # skip connection related stuff
 
@@ -856,11 +883,17 @@ class Transformer(Module):
             # attention across frequency tokens, if needed
 
             if self.has_freq_axis:
-                x, add_residual = maybe_freq_attn_residual(x)
-                attn_out, attn_inter = maybe_freq_attn(maybe_freq_attn_norm(x, **norm_kwargs), rotary_pos_emb = freq_rotary_pos_emb, return_intermediates = True, value_residual = freq_attn_first_values)
-                attn_out = maybe_freq_attn_adaln_zero(attn_out)
-                x = add_residual(attn_out)
 
+                x, add_residual = maybe_freq_attn_residual(x)
+
+                x = rearrange(x, '(b f) n d -> (b n) f d', b = orig_batch)
+
+                attn_out, attn_inter = maybe_freq_attn(maybe_freq_attn_norm(x, **freq_norm_kwargs), rotary_pos_emb = freq_rotary_pos_emb, return_intermediates = True, value_residual = freq_attn_first_values)
+                attn_out = maybe_freq_attn_adaln_zero(attn_out, **freq_norm_kwargs)
+
+                attn_out = rearrange(attn_out, '(b n) f d -> (b f) n d', b = orig_batch)
+
+                x = add_residual(attn_out)
                 freq_attn_first_values = default(freq_attn_first_values, attn_inter.values)
 
             # feedforward
@@ -877,6 +910,9 @@ class Transformer(Module):
         # sum all residual streams from hyper connections
 
         x = self.hyper_conn_reduce(x)
+
+        if self.has_freq_axis:
+            x = rearrange(x, '(b f) n d -> b f n d', f = freq_seq_len)
 
         return self.final_norm(x)
 
