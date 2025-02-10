@@ -853,6 +853,7 @@ class Transformer(Module):
                 x, add_residual = maybe_freq_attn_residual(x)
                 attn_out, attn_inter = maybe_freq_attn(maybe_freq_attn_norm(x, **norm_kwargs), rotary_pos_emb = freq_rotary_pos_emb, return_intermediates = True, value_residual = freq_attn_first_values)
                 attn_out = maybe_freq_attn_adaln_zero(attn_out)
+                x = add_residual(attn_out)
 
                 freq_attn_first_values = default(freq_attn_first_values, attn_inter.values)
 
