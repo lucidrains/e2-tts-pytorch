@@ -32,7 +32,7 @@ from torchaudio.functional import DB_to_amplitude
 from torchdiffeq import odeint
 
 import einx
-from einops.layers.torch import Rearrange
+from einops.layers.torch import Rearrange, Reduce
 from einops import rearrange, repeat, reduce, einsum, pack, unpack
 
 from x_transformers import (
@@ -702,7 +702,7 @@ class Transformer(Module):
         mask: Bool['b n'] | None = None,
         text_embed: Float['b n dt'] | None = None,
     ):
-        batch, seq_len, device = *x.shape[:2], x.device
+        batch, seq_len, device = x.shape[0], x.shape[-2], x.device
 
         assert not (exists(times) ^ self.cond_on_time), '`times` must be passed in if `cond_on_time` is set to `True` and vice versa'
 
@@ -929,7 +929,15 @@ class DurationPredictor(Module):
 
         self.dim = dim
 
-        self.proj_in = Linear(self.num_channels, self.dim)
+        # projecting depends on whether frequency axis is needed
+
+        if not self.has_freq_axis:
+            self.proj_in = Linear(self.num_channels, self.dim)
+        else:
+            self.proj_in = nn.Sequential(
+                Linear(self.num_channels, self.dim * num_freq_tokens),
+                Rearrange('b n (f d) -> b f n d', f = num_freq_tokens)
+            )
 
         # tokenizer and text embed
 
@@ -945,6 +953,10 @@ class DurationPredictor(Module):
             raise ValueError(f'unknown tokenizer string {tokenizer}')
 
         self.embed_text = CharacterEmbed(dim_text, num_embeds = text_num_embeds, **char_embed_kwargs)
+
+        # maybe reduce frequencies
+
+        self.maybe_reduce_freq_axis = Reduce('b f n d -> b n d', 'mean') if self.has_freq_axis else nn.Identity()
 
         # to prediction
         # applying https://arxiv.org/abs/2403.03950
@@ -973,7 +985,7 @@ class DurationPredictor(Module):
 
         x = self.proj_in(x)
 
-        batch, seq_len, device = *x.shape[:2], x.device
+        batch, seq_len, device = x.shape[0], x.shape[-2], x.device
 
         # text
 
@@ -1009,6 +1021,12 @@ class DurationPredictor(Module):
             mask = mask,
             text_embed = text_embed,
         )
+
+        # maybe reduce freq
+
+        embed = self.maybe_reduce_freq_axis(embed)
+
+        # masked mean
 
         pooled_embed = maybe_masked_mean(embed, mask)
 
@@ -1109,10 +1127,16 @@ class E2TTS(Module):
         self.concat_cond = concat_cond
 
         if concat_cond:
-            self.proj_in = nn.Linear(num_channels * 2, dim)
+            self.proj_in = nn.Linear(num_channels * 2, dim * num_freq_tokens)
         else:
-            self.proj_in = nn.Linear(num_channels, dim)
-            self.cond_proj_in = nn.Linear(num_channels, dim)
+            self.proj_in = nn.Linear(num_channels, dim * num_freq_tokens)
+            self.cond_proj_in = nn.Linear(num_channels, dim * num_freq_tokens)
+
+        # maybe split out frequency
+
+        self.maybe_split_freq = Rearrange('b n (f d) -> b f n d', f = num_freq_tokens) if self.has_freq_axis else nn.Identity()
+
+        self.maybe_reduce_freq = Reduce('b f n d -> b n d', 'mean') if self.has_freq_axis else nn.Identity()
 
         # to prediction
 
@@ -1170,12 +1194,15 @@ class E2TTS(Module):
             x = torch.cat((cond, x), dim = -1)
 
         x = self.proj_in(x)
+        x = self.maybe_split_freq(x)
 
         if not self.concat_cond:
             # an alternative is to simply sum the condition
             # seems to work fine
 
             cond = self.cond_proj_in(cond)
+            cond = self.maybe_split_freq(cond)
+
             x = x + cond
 
         # whether to use a text embedding
@@ -1186,14 +1213,16 @@ class E2TTS(Module):
 
         # attend
 
-        attended = self.transformer(
+        embed = self.transformer(
             x,
             times = times,
             mask = mask,
             text_embed = text_embed
         )
 
-        pred = self.to_pred(attended)
+        embed = self.maybe_reduce_freq(embed)
+
+        pred = self.to_pred(embed)
 
         if not return_drop_text_cond:
             return pred
