@@ -79,6 +79,12 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+def set_if_missing_key(d, key, value):
+    if key in d:
+        return
+
+    d.update(**{key: value})
+
 def l2norm(t):
     return F.normalize(t, dim = -1)
 
@@ -895,11 +901,21 @@ class DurationPredictor(Module):
     ):
         super().__init__()
 
+        # freq axis hparams
+
+        assert num_freq_tokens > 0
+        self.num_freq_tokens = num_freq_tokens
+        self.has_freq_axis = num_freq_tokens > 1
+
         if isinstance(transformer, dict):
+            set_if_missing_key(transformer, 'has_freq_axis', self.has_freq_axis)
+
             transformer = Transformer(
                 **transformer,
                 cond_on_time = False
             )
+
+        assert transformer.has_freq_axis == self.has_freq_axis
 
         # mel spec
 
@@ -1040,16 +1056,31 @@ class E2TTS(Module):
     ):
         super().__init__()
 
+        # freq axis hparams
+
+        assert num_freq_tokens > 0
+        self.num_freq_tokens = num_freq_tokens
+        self.has_freq_axis = num_freq_tokens > 1
+
+        # set transformer
+
         if isinstance(transformer, dict):
+            set_if_missing_key(transformer, 'has_freq_axis', self.has_freq_axis)
+
             transformer = Transformer(
                 **transformer,
                 cond_on_time = True
             )
 
+        assert transformer.has_freq_axis == self.has_freq_axis
+        self.transformer = transformer
+
+        # duration predictor
+
         if isinstance(duration_predictor, dict):
             duration_predictor = DurationPredictor(**duration_predictor)
 
-        self.transformer = transformer
+        # hparams
 
         dim = transformer.dim
         dim_text = transformer.dim_text
