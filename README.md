@@ -63,6 +63,10 @@ sampled = e2tts.sample(mel[:, :5], text = text)
 
 ```
 
+## Related Works
+
+- [Nanospeech](https://github.com/lucasnewman/nanospeech) by [Lucas Newman](https://github.com/lucasnewman), which contains training code, working examples, as well as interoperable MLX version!
+
 ## Citations
 
 ```bibtex
