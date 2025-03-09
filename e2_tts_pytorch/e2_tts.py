@@ -363,6 +363,28 @@ class RandomFourierEmbed(Module):
         fourier_embed, _ = pack((x, freqs.sin(), freqs.cos()), 'b *')
         return fourier_embed
 
+# linear with fourier embedded outputs
+
+class LinearFourierEmbed(Module):
+    def __init__(
+        self,
+        dim,
+        p = 0.5, # percentage of output dimension to fourier, they found 0.5 to be best (0.25 sin + 0.25 cos)
+    ):
+        super().__init__()
+        assert p <= 1.
+
+        dim_fourier = int(p * dim)
+        dim_rest = dim - (dim_fourier * 2)
+
+        self.linear = nn.Linear(dim, dim_fourier + dim_rest, bias = False)
+        self.split_dims = (dim_fourier, dim_rest)
+
+    def forward(self, x):
+        hiddens = self.linear(x)
+        fourier, rest = hiddens.split(self.split_dims, dim = -1)
+        return torch.cat((fourier.sin(), fourier.cos(), rest), dim = -1)
+
 # character embedding
 
 class CharacterEmbed(Module):
@@ -520,6 +542,8 @@ class Transformer(Module):
         scale_residual = False,
         attn_laser = False,
         attn_laser_softclamp_value = 15.,
+        attn_fourier_embed_input = False,
+        attn_fourier_embed_input_frac = 0.25, # https://arxiv.org/abs/2502.21309
         num_residual_streams = 4,
         attn_kwargs: dict = dict(
             gate_value_heads = True,
@@ -611,7 +635,11 @@ class Transformer(Module):
             speech_conv = DepthwiseConv(dim, kernel_size = kernel_size)
 
             attn_norm = rmsnorm_klass(dim)
+
+            attn_input_fourier_embed = LinearFourierEmbed(dim, p = attn_fourier_embed_input_frac) if attn_fourier_embed_input else nn.Identity()
+
             attn = Attention(dim = dim, heads = heads, dim_head = dim_head, dropout = dropout, learned_value_residual_mix = not is_first_block, laser = attn_laser, laser_softclamp_value = attn_laser_softclamp_value, **attn_kwargs)
+
             attn_adaln_zero = postbranch_klass()
 
             ff_norm = rmsnorm_klass(dim)
@@ -632,6 +660,7 @@ class Transformer(Module):
                 speech_conv,
                 attn_norm,
                 attn,
+                attn_input_fourier_embed,
                 attn_adaln_zero,
                 ff_norm,
                 ff,
@@ -802,6 +831,7 @@ class Transformer(Module):
                 speech_conv,
                 attn_norm,
                 attn,
+                attn_input_fourier_embed,
                 maybe_attn_adaln_zero,
                 ff_norm,
                 ff,
@@ -874,7 +904,12 @@ class Transformer(Module):
             # attention
 
             x, add_residual = attn_residual(x)
-            attn_out, attn_inter = attn(attn_norm(x, **norm_kwargs), rotary_pos_emb = rotary_pos_emb, mask = mask, return_intermediates = True, value_residual = attn_first_values)
+
+            x = attn_norm(x, **norm_kwargs)
+            x = attn_input_fourier_embed(x)
+
+            attn_out, attn_inter = attn(x, rotary_pos_emb = rotary_pos_emb, mask = mask, return_intermediates = True, value_residual = attn_first_values)
+
             attn_out = maybe_attn_adaln_zero(attn_out, **norm_kwargs)
             x = add_residual(attn_out)
 
