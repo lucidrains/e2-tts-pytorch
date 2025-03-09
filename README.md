@@ -188,3 +188,12 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:261556702}
 }
 ```
+
+```bibtex
+@inproceedings{Dong2025FANformerIL,
+    title   = {FANformer: Improving Large Language Models Through Effective Periodicity Modeling},
+    author  = {Yi Dong and Ge Li and Xue Jiang and Yongding Tao and Kechi Zhang and Hao Zhu and Huanyu Liu and Jiazheng Ding and Jia Li and Jinliang Deng and Hong Mei},
+    year    = {2025},
+    url     = {https://api.semanticscholar.org/CorpusID:276724636}
+}
+```
