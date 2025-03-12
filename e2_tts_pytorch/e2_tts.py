@@ -1304,17 +1304,21 @@ class E2TTS(Module):
         self,
         *args,
         cfg_strength: float = 1.,
+        cfg_null_model: E2TTS | None = None,
         remove_parallel_component: bool = True,
         keep_parallel_frac: float = 0.,
         **kwargs,
     ):
-        
+
         pred = self.transformer_with_pred_head(*args, drop_text_cond = False, **kwargs)
 
         if cfg_strength < 1e-5:
             return pred
 
-        null_pred = self.transformer_with_pred_head(*args, drop_text_cond = True, **kwargs)
+        null_drop_text_cond = not exists(cfg_null_model)
+        cfg_null_model = default(cfg_null_model, self)
+
+        null_pred = cfg_null_model.transformer_with_pred_head(*args, drop_text_cond = null_drop_text_cond, **kwargs)
 
         cfg_update = pred - null_pred
 
@@ -1334,8 +1338,9 @@ class E2TTS(Module):
         lens: Int['b'] | None = None,
         duration: int | Int['b'] | None = None,
         steps = 32,
-        cfg_strength = 1.,   # they used a classifier free guidance strength of 1.
-        max_duration = 4096, # in case the duration predictor goes haywire
+        cfg_strength = 1.,                      # they used a classifier free guidance strength of 1.
+        cfg_null_model: E2TTS | None = None,    # for "autoguidance" from Karras et al. https://arxiv.org/abs/2406.02507
+        max_duration = 4096,                    # in case the duration predictor goes haywire
         vocoder: Callable[[Float['b d n']], list[Float['_']]] | None = None,
         return_raw_output: bool | None = None,
         save_to_filename: str | None = None
@@ -1406,7 +1411,8 @@ class E2TTS(Module):
                 times = t,
                 text = text,
                 mask = mask,
-                cfg_strength = cfg_strength
+                cfg_strength = cfg_strength,
+                cfg_null_model = cfg_null_model
             )
 
         y0 = torch.randn_like(cond)
