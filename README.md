@@ -197,3 +197,14 @@ sampled = e2tts.sample(mel[:, :5], text = text)
     url     = {https://api.semanticscholar.org/CorpusID:276724636}
 }
 ```
+
+```bibtex
+@article{Karras2024GuidingAD,
+    title   = {Guiding a Diffusion Model with a Bad Version of Itself},
+    author  = {Tero Karras and Miika Aittala and Tuomas Kynk{\"a}{\"a}nniemi and Jaakko Lehtinen and Timo Aila and Samuli Laine},
+    journal = {ArXiv},
+    year    = {2024},
+    volume  = {abs/2406.02507},
+    url     = {https://api.semanticscholar.org/CorpusID:270226598}
+}
+```
