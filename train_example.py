@@ -27,6 +27,7 @@ train_dataset = HFDataset(load_dataset("MushanW/GLOBE")["train"])
 
 trainer = E2Trainer(
     e2tts,
+    duration_predictor = duration_predictor,
     num_warmup_steps=20000,
     grad_accumulation_steps = 1,
     checkpoint_path = 'e2tts.pt',
