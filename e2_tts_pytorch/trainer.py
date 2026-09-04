@@ -38,6 +38,24 @@ def exists(v):
 def default(v, d):
     return v if exists(v) else d
 
+
+def combine_training_losses(
+    flow_loss,
+    duration_loss = None,
+    duration_loss_weight = 1.
+):
+    """Build the objective used by the trainer.
+
+    Duration prediction is optional.  Keeping the combination in one helper
+    makes the no-duration path exactly identical to the original flow loss,
+    while allowing the duration predictor to receive gradients when enabled.
+    """
+
+    if not exists(duration_loss):
+        return flow_loss
+
+    return flow_loss + duration_loss * duration_loss_weight
+
 def to_numpy(t):
     return t.detach().cpu().numpy()
 
@@ -148,7 +166,8 @@ class E2Trainer:
         tensorboard_log_dir = 'runs/e2_tts_experiment',
         accelerate_kwargs: dict = dict(),
         ema_kwargs: dict = dict(),
-        use_switch_ema = False
+        use_switch_ema = False,
+        duration_loss_weight = 1.
     ):
         logger.add(log_file)
 
@@ -176,6 +195,7 @@ class E2Trainer:
         self.use_switch_ema = use_switch_ema
 
         self.duration_predictor = duration_predictor
+        self.duration_loss_weight = duration_loss_weight
 
         # optimizer
 
@@ -252,6 +272,8 @@ class E2Trainer:
                     mel_spec = rearrange(batch['mel'], 'b d n -> b n d')
                     mel_lengths = batch["mel_lengths"]
 
+                    dur_loss = None
+
                     if exists(self.duration_predictor):
                         dur_loss = self.duration_predictor(mel_spec, lens=batch.get('durations'))
                         self.writer.add_scalar('duration loss', dur_loss.item(), global_step)
@@ -267,7 +289,13 @@ class E2Trainer:
                         velocity_consistency_model=velocity_consistency_model
                     )
 
-                    self.accelerator.backward(loss)
+                    total_loss = combine_training_losses(
+                        loss,
+                        dur_loss,
+                        self.duration_loss_weight
+                    )
+
+                    self.accelerator.backward(total_loss)
 
                     if self.max_grad_norm > 0 and self.accelerator.sync_gradients:
                         self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
@@ -279,13 +307,14 @@ class E2Trainer:
                 self.accelerator.unwrap_model(self.ema_model).update()
 
                 if self.accelerator.is_local_main_process:
-                    logger.info(f"step {global_step+1}: loss = {loss.item():.4f}")
-                    self.writer.add_scalar('loss', loss.item(), global_step)
+                    logger.info(f"step {global_step+1}: loss = {total_loss.item():.4f}")
+                    self.writer.add_scalar('loss', total_loss.item(), global_step)
+                    self.writer.add_scalar('flow loss', loss.item(), global_step)
                     self.writer.add_scalar("lr", self.scheduler.get_last_lr()[0], global_step)
                 
                 global_step += 1
-                epoch_loss += loss.item()
-                progress_bar.set_postfix(loss=loss.item())
+                epoch_loss += total_loss.item()
+                progress_bar.set_postfix(loss=total_loss.item())
                 
                 if global_step % save_step == 0:
                     self.save_checkpoint(global_step)
